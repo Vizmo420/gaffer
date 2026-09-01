@@ -286,159 +286,16 @@ $('#fileImport').addEventListener('change', (e) => {
   if (!file) return;
   const reader = new FileReader();
   reader.onload = () => {
-    const text = reader.result;
-    if (/\.csv$/i.test(file.name) || /^[^\n]*Imię i nazwisko[^\n]*PlayerID/i.test(text)) {
-      try {
-        const squad = parseSquadCsv(text);
-        if (!squad.players.length) throw new Error('nie rozpoznano żadnego wiersza');
-        applySquad(squad);
-        alert(`Wczytano ${squad.players.length} zawodników z CSV.`);
-      } catch (err) {
-        alert('Nie udało się wczytać CSV: ' + err.message);
-      }
-      return;
-    }
     try {
-      const json = JSON.parse(text);
+      const json = JSON.parse(reader.result);
       if (json.sourceFile || /youth/i.test(file.name)) applyYouth(json);
       else applySquad(json);
     } catch (err) {
-      alert('Nieprawidłowy plik (nie CSV ani JSON): ' + err.message);
+      alert('Nieprawidłowy JSON: ' + err.message);
     }
   };
   reader.readAsText(file);
 });
-
-// ------------------------- import CSV kadry (eksport HT, PL) -------------------------
-
-const CSV_SPEC_PL = {
-  techniczny: 1, szybki: 2, mocarny: 3, 'atletyczny': 3, nieprzewidywalny: 4,
-  'gra głową': 5, 'głowa': 5, regenerujący: 6, wsparcie: 8,
-};
-// Kod pozycji z „Pozycja w ostatnim meczu" -> typ slotu.
-const CSV_POS_PL = {
-  BR: 'GK',
-  ST: 'CD', 'ŚO': 'CD', SO: 'CD',
-  BO: 'WB', LO: 'WB', PO: 'WB', LB: 'WB', PB: 'WB',
-  LS: 'WI', PS: 'WI', 'Ś': 'WI', SK: 'WI', 'LŚ': 'WI', 'PŚ': 'WI',
-  PM: 'IM', 'ŚP': 'IM', SP: 'IM',
-  NP: 'FW', NA: 'FW',
-};
-
-function csvLine(line) {
-  const out = [];
-  let cur = '', q = false;
-  for (let i = 0; i < line.length; i++) {
-    const c = line[i];
-    if (q) {
-      if (c === '"' && line[i + 1] === '"') { cur += '"'; i++; }
-      else if (c === '"') q = false;
-      else cur += c;
-    } else if (c === '"') q = true;
-    else if (c === ',') { out.push(cur); cur = ''; }
-    else cur += c;
-  }
-  out.push(cur);
-  return out;
-}
-
-function parseSquadCsv(text) {
-  const lines = text.replace(/^﻿/, '').split(/\r?\n/).filter((l) => l.trim());
-  if (lines.length < 2) throw new Error('za mało wierszy');
-  const head = csvLine(lines[0]).map((h) => h.trim().toLowerCase());
-  const col = (name) => head.indexOf(name.toLowerCase());
-  const idx = {
-    num: col('Numer na koszulce'),
-    name: col('Imię i nazwisko'),
-    id: col('PlayerID'),
-    spec: col('Specjalność'),
-    mcb: col('Wychowanek'),
-    inj: col('Kontuzje'),
-    cards: col('Kartki'),
-    tl: col('Wystawiony na sprzedaż'),
-    age: col('Wiek'),
-    days: col('Dni'),
-    tsi: col('TSI'),
-    salary: col('Pensja'),
-    weeksClub: col('Liczba tygodni w klubie'),
-    xp: col('Doświadczenie'),
-    ld: col('Przywódca'),
-    loy: col('Lojalność'),
-    form: col('Forma'),
-    stamina: col('Kondycja'),
-    keeper: col('Bronienie'),
-    defending: col('Defensywa'),
-    playmaking: col('Rozgrywanie'),
-    winger: col('Dośrodkowania'),
-    passing: col('Podania'),
-    scoring: col('Skuteczność'),
-    setPieces: col('St. fragmenty'),
-    lastDate: col('Data ostatniego meczu'),
-    lastRating: col('Ostatnia ocena meczowa'),
-    lastPos: col('Pozycja w ostatnim meczu'),
-  };
-  if (idx.name < 0 || idx.playmaking < 0) throw new Error('brak spodziewanych kolumn (to nie eksport kadry HT?)');
-
-  const n = (v) => {
-    const x = parseFloat(String(v ?? '').replace(',', '.'));
-    return Number.isFinite(x) ? x : 0;
-  };
-  const parsePlDate = (s) => {
-    const m = String(s || '').match(/(\d{1,2})\.(\d{1,2})\.(\d{4})/);
-    return m ? new Date(+m[3], +m[2] - 1, +m[1]) : null;
-  };
-  const now = Date.now();
-
-  const players = lines.slice(1).map((line) => {
-    const f = csvLine(line);
-    const full = (f[idx.name] || '').trim();
-    const sp = full.indexOf(' ');
-    const specText = (f[idx.spec] || '').trim().toLowerCase();
-    const lastD = idx.lastDate >= 0 ? parsePlDate(f[idx.lastDate]) : null;
-    const lastRating = idx.lastRating >= 0 ? n(f[idx.lastRating]) : 0;
-    const slot = idx.lastPos >= 0 ? CSV_POS_PL[(f[idx.lastPos] || '').trim()] ?? null : null;
-    return {
-      id: n(f[idx.id]) || Math.floor(Math.random() * 1e9),
-      firstName: sp > 0 ? full.slice(0, sp) : full,
-      lastName: sp > 0 ? full.slice(sp + 1) : '',
-      nickName: '',
-      number: idx.num >= 0 && f[idx.num] ? n(f[idx.num]) : null,
-      age: n(f[idx.age]),
-      ageDays: n(f[idx.days]),
-      ageYears: Number((n(f[idx.age]) + n(f[idx.days]) / 112).toFixed(2)),
-      form: n(f[idx.form]),
-      stamina: n(f[idx.stamina]),
-      experience: n(f[idx.xp]),
-      leadership: n(f[idx.ld]),
-      loyalty: idx.loy >= 0 && f[idx.loy] !== '' ? n(f[idx.loy]) : null,
-      motherClubBonus: idx.mcb >= 0 ? String(f[idx.mcb]).trim() === '1' : null,
-      motherClubManual: false,
-      keeper: n(f[idx.keeper]),
-      defending: n(f[idx.defending]),
-      playmaking: n(f[idx.playmaking]),
-      winger: n(f[idx.winger]),
-      passing: n(f[idx.passing]),
-      scoring: n(f[idx.scoring]),
-      setPieces: n(f[idx.setPieces]),
-      tsi: n(f[idx.tsi]),
-      salary: n(f[idx.salary]),
-      specialty: CSV_SPEC_PL[specText] ?? 0,
-      injuryLevel: idx.inj >= 0 && f[idx.inj] !== '' ? n(f[idx.inj]) : -1,
-      yellowCards: idx.cards >= 0 && f[idx.cards] !== '' ? n(f[idx.cards]) : 0,
-      transferListed: idx.tl >= 0 ? String(f[idx.tl]).trim() === '1' : false,
-      daysAtClub: idx.weeksClub >= 0 && f[idx.weeksClub] !== '' ? n(f[idx.weeksClub]) * 7 : null,
-      trained: false,
-      manualRating: null,
-      weeksSinceLastMatch: lastD ? Math.floor((now - lastD.getTime()) / (7 * 864e5)) : null,
-      recentRatings:
-        lastD && lastRating > 0
-          ? [{ matchId: 0, date: lastD.toISOString(), stars: lastRating, slot }]
-          : [],
-    };
-  });
-
-  return { teamName: 'Kadra z CSV', teamId: 0, players };
-}
 
 // ------------------------- nawigacja / powłoka -------------------------
 

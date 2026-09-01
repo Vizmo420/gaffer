@@ -166,9 +166,6 @@ Widoki:
   wyniki z oceną na Twoją pozycję, **Σ-zyskiem jeśli kupisz** (marginal value)
   i **zł/Σ**. Plus **P&L transferowe** (wydano / zarobiono / netto).
 - **Prywatność** — wszystko lokalnie, żadnych danych na serwer.
-- **Import CSV** — przycisk „Importuj" wczytuje eksport kadry (CSV, PL) obok
-  formatu JSON. Działa bez CHPP: umiejętności, TSI, pensja, specjalność,
-  lojalność, wychowanek, kartki i jedna ocena meczowa (z pozycją) na gracza.
 
 Interfejs jest instalowalny jako **PWA** (manifest + service worker) — działa
 też offline na ostatnio wczytanych danych.

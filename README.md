@@ -4,8 +4,11 @@ Open-source'owy asystent menedżera Hattrick: pobiera dane Twojej drużyny z
 oficjalnego API gry (CHPP) i w przeglądarce dobiera najlepszy skład, analizuje
 kadrę, trening, ekonomię, transfery i rywali w lidze.
 
+**Demo (dane przykładowe):** https://vizmo420.github.io/gaffer/
+
 Licencja: [MIT](LICENSE). Projekt jest darmowy i publiczny — możesz go
-uruchomić lokalnie albo forknąć.
+uruchomić lokalnie albo forknąć. Twoje dane nigdy nie trafiają na żaden serwer:
+klient CLI odpytuje CHPP z Twojego komputera, interfejs działa w przeglądarce.
 
 **Architektura (świadomy wybór):** jednorazowe komendy CLI, **bez stałego
 serwera**. Logowanie raz (link + kod), token zapisany lokalnie. CLI pobiera dane

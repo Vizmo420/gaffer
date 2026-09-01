@@ -1,0 +1,11 @@
+node_modules/
+.env
+.hattrick-token.json
+data/*.json
+data/*.sqlite
+data/*.sqlite-*
+!data/.gitkeep
+
+hattrick-standalone.html
+.impeccable/
+

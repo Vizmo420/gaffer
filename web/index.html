@@ -1,0 +1,464 @@
+<!doctype html>
+<html lang="pl">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#101418" />
+    <title>Gaffer</title>
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div class="app">
+      <aside class="sidebar" id="sidebar">
+        <div class="logo">
+          <span class="logo-mark">G</span>
+          <span class="logo-text">Gaffer</span>
+        </div>
+        <nav class="sidenav">
+          <p class="navgroup-label">Skład</p>
+          <button data-tab="optimizer" data-title="Optymalizator składu" class="active">Optymalizator</button>
+          <button data-tab="training" data-title="Trening">Trening</button>
+          <p class="navgroup-label">Kadra</p>
+          <button data-tab="squad" data-title="Zawodnicy">Zawodnicy</button>
+          <button data-tab="skillmap" data-title="Mapa umiejętności">Mapa umiejętności</button>
+          <button data-tab="ratingmap" data-title="Mapa ocen">Mapa ocen</button>
+          <p class="navgroup-label">Drużyna</p>
+          <button data-tab="economy" data-title="Ekonomia">Ekonomia</button>
+          <button data-tab="transfers" data-title="Transfery">Transfery</button>
+          <button data-tab="history" data-title="Historia i zmiany">Historia</button>
+          <button data-tab="matches" data-title="Mecze">Mecze</button>
+          <p class="navgroup-label">Śledzenie</p>
+          <button data-tab="chronicle" data-title="Kronika Klubu">Kronika Klubu</button>
+          <p class="navgroup-label">Młodzież</p>
+          <button data-tab="youth" data-title="Akademia młodzieżowa">Akademia</button>
+        </nav>
+        <div class="sidebar-foot">
+          <div class="team" id="teamInfo">Przykładowa kadra</div>
+          <p class="priv">Dane tylko lokalnie — nic nie trafia na żaden serwer.</p>
+        </div>
+      </aside>
+      <div class="scrim" id="scrim"></div>
+
+      <div class="content">
+        <header class="topbar">
+          <button class="icon-btn nav-toggle" id="navToggle" aria-label="Menu" title="Menu">☰</button>
+          <h1 id="viewTitle">Optymalizator składu</h1>
+          <div class="topbar-actions">
+            <button id="btnReload" class="ghost sm" title="Wczytaj ponownie dane z folderu data/">↻ Dane</button>
+            <label class="filebtn sm">
+              Importuj
+              <input type="file" id="fileImport" accept="application/json" hidden />
+            </label>
+            <button id="themeToggle" class="icon-btn" aria-label="Przełącz motyw" title="Przełącz motyw">◐</button>
+          </div>
+        </header>
+        <div id="freshness" class="freshness"></div>
+
+        <main>
+          <!-- ---------------- KADRA ---------------- -->
+          <section id="tab-squad" class="tab">
+            <p class="hint">
+              Klik w nagłówek sortuje. Umiejętności i pola <em>Tren. / Wych. / Dni / Śr. ocena</em>
+              są edytowalne i zapisują się w przeglądarce.
+            </p>
+            <div class="tablewrap">
+              <table id="squadTable"><thead></thead><tbody></tbody></table>
+            </div>
+
+            <h3 class="section-h">Porównaj zawodników</h3>
+            <div class="cmp-picks">
+              <select id="cmp1"></select>
+              <select id="cmp2"></select>
+              <select id="cmp3"></select>
+            </div>
+            <div class="tablewrap"><table id="compareTable"><thead></thead><tbody></tbody></table></div>
+          </section>
+
+          <!-- ---------------- OPTYMALIZATOR ---------------- -->
+          <section id="tab-optimizer" class="tab active">
+            <div id="reportCard" class="report-card"></div>
+            <div class="opt-grid">
+              <div class="controls panel">
+                <label class="row">
+                  <span>Kryterium</span>
+                  <select id="optMode">
+                    <option value="skill">Wg umiejętności</option>
+                    <option value="rating">Wg ocen z meczów</option>
+                  </select>
+                </label>
+
+                <label class="row">
+                  <span>Formacja</span>
+                  <select id="formation"><option value="auto">Auto (najlepsza)</option></select>
+                </label>
+
+                <div class="actions">
+                  <button id="btnOptimize" class="primary">Generuj skład</button>
+                  <button id="btnSquadB">Skład B (z reszty)</button>
+                </div>
+                <p class="hint small" id="lockHint"></p>
+
+                <details class="weights">
+                  <summary>Więcej opcji i filtry</summary>
+
+                  <label class="row check"><input type="checkbox" id="useLoyalty" /><span>Uwzględniaj lojalność / wychowanka</span></label>
+                  <label class="row check"><input type="checkbox" id="allowInjured" /><span>Dopuszczaj kontuzjowanych</span></label>
+                  <label class="row check"><input type="checkbox" id="allowSuspended" /><span>Dopuszczaj zawieszonych (≥3 żółte)</span></label>
+                  <label class="row check"><input type="checkbox" id="idleOn" /><span>Pomiń nieaktywnych powyżej</span></label>
+                  <label class="row sub"><span>tygodni bez meczu</span><input type="number" id="idleWeeks" min="1" max="20" value="4" /></label>
+                  <label class="row check"><input type="checkbox" id="extraTime" /><span>Pod dogrywkę (kondycja waży więcej)</span></label>
+
+                  <fieldset class="training">
+                    <legend>Trening</legend>
+                    <label class="row">
+                      <span>Typ treningu klubu</span>
+                      <select id="trainingType"><option value="">— brak —</option></select>
+                    </label>
+                    <label class="row sub">
+                      <span>Waga treningu</span>
+                      <input type="range" id="trainingWeight" min="0" max="3" step="0.25" value="1" />
+                      <output id="trainingWeightOut">1</output>
+                    </label>
+                    <p class="hint small">Trenowanych zaznacz w zakładce Zawodnicy (kolumna <em>Tren.</em>).</p>
+                  </fieldset>
+
+                  <fieldset class="training">
+                    <legend>Drużyna i pogoda</legend>
+                    <label class="row"><span>Nastrój</span>
+                      <select id="teamSpirit">
+                        <option value="">—</option>
+                        <option>bardzo zły</option><option>zły</option><option>obojętny</option>
+                        <option>zadowalający</option><option>dobry</option><option>bardzo dobry</option>
+                        <option>wspaniały</option><option>rajski</option>
+                      </select></label>
+                    <label class="row"><span>Pewność siebie</span>
+                      <select id="teamConfidence">
+                        <option value="">—</option>
+                        <option>żałosna</option><option>słaba</option><option>przyzwoita</option>
+                        <option>silna</option><option>bardzo silna</option><option>rewelacyjna</option>
+                      </select></label>
+                    <label class="row"><span>Pogoda na mecz</span>
+                      <select id="weather">
+                        <option value="">— nieznana —</option>
+                        <option value="sun">słonecznie</option>
+                        <option value="cloud">pochmurno</option>
+                        <option value="rain">deszcz</option>
+                      </select></label>
+                    <div id="weatherImpact" class="hint small"></div>
+                  </fieldset>
+
+                  <fieldset class="training">
+                    <legend>Krycie (podpowiedź)</legend>
+                    <label class="row"><span>Kluczowy zawodnik rywala gra jako</span>
+                      <select id="markPos">
+                        <option value="">—</option>
+                        <option value="FW">Napastnik</option>
+                        <option value="WI">Skrzydłowy</option>
+                        <option value="IM">Śr. pomocnik</option>
+                      </select></label>
+                    <div id="markAdvice" class="hint small"></div>
+                  </fieldset>
+
+                  <fieldset class="training">
+                    <legend>Presety</legend>
+                    <label class="row">
+                      <span>Zapisany</span>
+                      <select id="presetSel"><option value="">— wybierz —</option></select>
+                    </label>
+                    <div class="actions">
+                      <button id="btnPresetSave" class="ghost">Zapisz bieżące jako…</button>
+                      <button id="btnPresetDelete" class="ghost">Usuń preset</button>
+                    </div>
+                  </fieldset>
+
+                  <fieldset class="training">
+                    <legend>Wagi pozycji</legend>
+                    <div class="actions">
+                      <button id="btnCalibrate" class="ghost">Dopasuj z moich ocen</button>
+                      <button id="btnResetWeights" class="ghost">Przywróć domyślne</button>
+                    </div>
+                    <p class="hint small" id="calibNote">Regresja wag do Twoich <code>RatingStars</code> + pozycji z meczów. Mało próbek na pozycję = zostaje domyślna.</p>
+                    <div id="weightSliders"></div>
+                  </fieldset>
+
+                  <div class="actions">
+                    <button id="btnClearLocks" class="ghost">Wyczyść blokady</button>
+                    <button id="btnUndo" class="ghost">↶ Cofnij</button>
+                    <button id="btnExportLineup" class="ghost">Kopiuj skład (tekst)</button>
+                    <button id="btnReport" class="ghost">Kopiuj raport (MD)</button>
+                  </div>
+                </details>
+              </div>
+
+              <div class="pitchcol">
+                <div class="pitch-head">
+                  <span id="pitchTitle">Skład A</span>
+                  <span id="pitchTotal" class="total"></span>
+                </div>
+                <div id="pitch" class="pitch"></div>
+                <p class="hint small">Klik w slot = ranking i blokada. Przeciągnij = zamiana. Klik w liczbę = rozbicie oceny.</p>
+                <div id="closeCalls" class="training-report"></div>
+                <div id="sectors" class="sectors"></div>
+                <p id="spCaptain" class="hint small"></p>
+                <details class="weights">
+                  <summary>Analiza głębi kadry</summary>
+                  <div id="depthBox"></div>
+                </details>
+                <details class="weights">
+                  <summary>Wkład zawodników w sektory</summary>
+                  <div id="sectorContrib"></div>
+                </details>
+                <details class="weights">
+                  <summary>Zmęczenie i sugerowane zmiany</summary>
+                  <div id="fatigue"></div>
+                </details>
+                <details class="weights">
+                  <summary>Przeciwnik i kontr-ustawienie (opcjonalnie)</summary>
+                  <p class="hint small">Wpisz szacowane oceny sektorów rywala (skala ~1–10+). Podpowiemy nastawienie i gdzie masz przewagę/lukę.</p>
+                  <label class="row"><span>Obrona rywala</span><input type="number" id="oppDef" min="0" step="0.5" /></label>
+                  <label class="row"><span>Pomoc rywala</span><input type="number" id="oppMid" min="0" step="0.5" /></label>
+                  <label class="row"><span>Atak rywala</span><input type="number" id="oppAtt" min="0" step="0.5" /></label>
+                  <div id="counterAdvice" class="training-report"></div>
+                </details>
+                <div id="trainingReport" class="training-report"></div>
+              </div>
+            </div>
+          </section>
+
+          <!-- ---------------- TRENING ---------------- -->
+          <section id="tab-training" class="tab">
+            <p class="hint">
+              <strong>Szacunki</strong> — Hattrick nie publikuje wzoru treningu.
+              Współczynniki to przybliżenia społeczności; traktuj wynik jak trend.
+            </p>
+            <div class="tr-cfg panel">
+              <label class="row"><span>Typ treningu klubu</span>
+                <select id="trType"></select></label>
+              <label class="row"><span>Intensywność treningu %</span>
+                <input type="number" id="trIntensity" min="10" max="100" value="100" /></label>
+              <label class="row"><span>Udział kondycji %</span>
+                <input type="number" id="trStamina" min="0" max="90" value="10" /></label>
+              <label class="row"><span>Poziom trenera</span>
+                <select id="trCoach">
+                  <option value="1">1 — fatalny</option><option value="2">2 — słaby</option>
+                  <option value="3">3 — przeciętny</option><option value="4" selected>4 — solidny</option>
+                  <option value="5">5 — dobry</option><option value="6">6 — bardzo dobry</option>
+                  <option value="7">7 — znakomity+</option>
+                </select></label>
+              <label class="row"><span>Asystenci trenera (0–10)</span>
+                <input type="number" id="trAssist" min="0" max="10" value="0" /></label>
+            </div>
+
+            <h3 class="section-h">Trenowani zawodnicy — projekcja</h3>
+            <p class="hint">Główna trenowana umiejętność, następny poziom, ~tygodni, poziom po sezonie (13 tyg.). ⚠ = bliski skok pensji.</p>
+            <div class="tablewrap"><table id="trProjection"><thead></thead><tbody></tbody></table></div>
+
+            <h3 class="section-h">„Kogo trenować" — ranking efektywności</h3>
+            <p class="hint">Młody wiek × pole do wzrostu × czy gra na trenowanej pozycji × pokrycie treningu.</p>
+            <div class="tablewrap"><table id="trRanking"><thead></thead><tbody></tbody></table></div>
+          </section>
+
+          <!-- ---------------- MAPA UMIEJĘTNOŚCI ---------------- -->
+          <section id="tab-skillmap" class="tab">
+            <p class="hint">Poziom ogólny w nawiasie, <strong>dwie najlepsze</strong> pogrubione, ★ przy maksymalnej umiejętności.</p>
+            <label class="row check"><input type="checkbox" id="skillMapLoyalty" /><span>Pokaż bonus lojalności / wychowanka (prawdziwa wartość)</span></label>
+            <div class="tablewrap"><table id="skillMap"><thead></thead><tbody></tbody></table></div>
+          </section>
+
+          <!-- ---------------- MAPA OCEN ---------------- -->
+          <section id="tab-ratingmap" class="tab">
+            <p class="hint">
+              Oceny z ostatnich meczów. Kolumna <em>Śr.</em> jest edytowalna i zasila
+              tryb optymalizacji „wg ocen".
+            </p>
+            <div class="tablewrap"><table id="ratingMap"><thead></thead><tbody></tbody></table></div>
+          </section>
+
+          <!-- ---------------- EKONOMIA ---------------- -->
+          <section id="tab-economy" class="tab">
+            <div id="ecoCards" class="eco-cards"></div>
+            <h3 class="section-h">Wynagrodzenia i efektywność</h3>
+            <p class="hint">TSI/pensja = ile TSI „kupujesz" za jednostkę pensji (wyżej = lepiej). Sortuj klikając nagłówek.</p>
+            <div class="tablewrap"><table id="ecoTable"><thead></thead><tbody></tbody></table></div>
+            <h3 class="section-h">Martwy balast</h3>
+            <p class="hint">Wysoka pensja + dawno bez meczu + wiek. Kandydaci do sprzedaży.</p>
+            <div class="tablewrap"><table id="ecoDead"><thead></thead><tbody></tbody></table></div>
+            <h3 class="section-h">Piramida wieku</h3>
+            <div id="agePyramid" class="age-pyramid"></div>
+          </section>
+
+          <!-- ---------------- TRANSFERY ---------------- -->
+          <section id="tab-transfers" class="tab">
+            <h3 class="section-h">Skaner rynku</h3>
+            <p class="hint">
+              CHPP zwraca umiejętności graczy aktualnie wystawionych. Ustaw kryteria,
+              skopiuj komendę, odpal ją — wyniki wrócą z oceną na Twoją pozycję i zyskiem Σ.
+            </p>
+            <div class="scout-form">
+              <label class="row"><span>Pozycja docelowa</span>
+                <select id="scPos">
+                  <option value="">— dowolna —</option>
+                  <option value="GK">Bramkarz</option><option value="CD">Śr. obrońca</option>
+                  <option value="WB">Boczny obr.</option><option value="WI">Skrzydłowy</option>
+                  <option value="IM">Śr. pomocnik</option><option value="FW">Napastnik</option>
+                </select></label>
+              <label class="row"><span>Umiejętność ≥</span>
+                <select id="scSkill">
+                  <option value="">—</option>
+                  <option value="keeper">Bramkarstwo</option><option value="defending">Obrona</option>
+                  <option value="playmaking">Rozgrywanie</option><option value="winger">Skrzydła</option>
+                  <option value="passing">Podania</option><option value="scoring">Wykończenie</option>
+                  <option value="setPieces">Stałe fragmenty</option>
+                </select>
+                <input type="number" id="scMin" min="0" max="20" placeholder="poz." style="max-width:70px" /></label>
+              <label class="row"><span>Wiek max</span><input type="number" id="scAge" min="17" max="40" /></label>
+              <label class="row"><span>Cena max</span><input type="number" id="scPrice" min="0" step="10000" /></label>
+              <label class="row"><span>TSI max</span><input type="number" id="scTsi" min="0" step="10000" /></label>
+            </div>
+            <div class="actions">
+              <button id="btnScoutCmd" class="ghost">Kopiuj komendę</button>
+            </div>
+            <div class="tablewrap"><table id="scoutTable"><thead></thead><tbody></tbody></table></div>
+
+            <h3 class="section-h">Historia transferów</h3>
+            <div id="transferPnl" class="eco-cards"></div>
+            <div class="tablewrap"><table id="transferHist"><thead></thead><tbody></tbody></table></div>
+
+            <h3 class="section-h">Znajdź podobnych (po TSI)</h3>
+            <p class="hint">Dopasowanie po TSI z historii transferów (<code>node cli.js transfers</code>).</p>
+            <label class="row" style="max-width:420px">
+              <span>Zawodnik</span>
+              <select id="similarPlayer"></select>
+            </label>
+            <div class="tablewrap"><table id="similarTable"><thead></thead><tbody></tbody></table></div>
+          </section>
+
+          <!-- ---------------- HISTORIA ---------------- -->
+          <section id="tab-history" class="tab">
+            <div id="histCards" class="eco-cards"></div>
+            <h3 class="section-h">Tabela formy — ostatnie mecze</h3>
+            <div class="tablewrap"><table id="histForm"><thead></thead><tbody></tbody></table></div>
+            <h3 class="section-h">Trendy ocen zawodników</h3>
+            <p class="hint">Iskierka = kolejne oceny (od najstarszej). Δ = zmiana od pierwszej do ostatniej.</p>
+            <div class="tablewrap"><table id="histTrends"><thead></thead><tbody></tbody></table></div>
+
+            <h3 class="section-h">Zmiany od ostatniej migawki</h3>
+            <p class="hint">Nowi / odeszli / skoki umiejętności. Wymaga 2 migawek (<code>node cli.js changes</code>).</p>
+            <div id="changesBox"></div>
+          </section>
+
+          <!-- ---------------- MECZE ---------------- -->
+          <section id="tab-matches" class="tab">
+            <p class="hint">Z <code>data/matches.json</code> (<code>node cli.js matches</code>). „Ustaw skład" przenosi do optymalizatora.</p>
+            <div class="tablewrap"><table id="matchTable"><thead></thead><tbody></tbody></table></div>
+            <h3 class="section-h">Planer rotacji</h3>
+            <p class="hint">Trudność wg PowerRating rywala. Łatwy mecz = rotacja / trening, trudny = pełna siła.</p>
+            <div class="tablewrap"><table id="rotationTable"><thead></thead><tbody></tbody></table></div>
+            <h3 class="section-h">Podgląd nadchodzących rywali</h3>
+            <p class="hint">Pojawia się po <code>node cli.js opponent &lt;teamId&gt;</code> (publiczne dane, bez scoutingu).</p>
+            <div id="matchOpp" class="eco-cards"></div>
+          </section>
+
+          <!-- ---------------- KRONIKA KLUBU ---------------- -->
+          <section id="tab-chronicle" class="tab">
+            <p class="hint">
+              Śledzenie innych drużyn (publiczne dane, bez scrapingu). Dodaj:
+              <code>node cli.js watch add &lt;teamId&gt;</code>, potem <code>node cli.js chronicle</code>.
+            </p>
+            <div id="threatRadar" class="radar"></div>
+            <details class="weights">
+              <summary>Które metryki pokazywać</summary>
+              <div id="chronMetrics"></div>
+            </details>
+            <div id="chronicleBox" class="chron-grid"></div>
+          </section>
+
+          <!-- ---------------- MŁODZIEŻ ---------------- -->
+          <section id="tab-youth" class="tab">
+            <div class="opt-grid">
+              <div class="controls panel">
+                <h3>Młodzież — ustawienia</h3>
+                <p class="hint small" id="youthSource"></p>
+
+                <label class="row">
+                  <span>Kryterium</span>
+                  <select id="youthMode">
+                    <option value="potential">Potencjał (maks. umiejętności)</option>
+                    <option value="current">Bieżące umiejętności</option>
+                    <option value="rating">Wg ocen z meczów</option>
+                    <option value="star">Wokół gwiazdy (max trening)</option>
+                  </select>
+                </label>
+                <label class="row">
+                  <span>Formacja</span>
+                  <select id="youthFormation"><option value="auto">Auto</option></select>
+                </label>
+                <label class="row check"><input type="checkbox" id="youthRevealedOnly" /><span>Tylko z ujawnionymi skillami</span></label>
+
+                <label class="row">
+                  <span>Gwiazda drużyny</span>
+                  <select id="youthStar"></select>
+                </label>
+                <p class="hint small">
+                  Auto-wykrycie = najwyższa suma maks. umiejętności (przejrzysta
+                  heurystyka, nie inferencja AI). Możesz nadpisać ręcznie.
+                </p>
+
+                <div class="actions">
+                  <button id="btnYouthOptimize" class="primary">Generuj skład młodzieży</button>
+                </div>
+              </div>
+              <div class="pitchcol">
+                <div class="pitch-head">
+                  <span id="youthPitchTitle">Skład młodzieży</span>
+                  <span id="youthPitchTotal" class="total"></span>
+                </div>
+                <div id="youthPitch" class="pitch"></div>
+                <p class="hint small">Klik na slot = ranking i blokada. Przeciągnij = zamiana.</p>
+                <div id="youthTrainSlots" class="training-report"></div>
+              </div>
+            </div>
+
+            <h3 class="section-h">Kadra młodzieżowa</h3>
+            <p class="hint">Kliknij nagłówek, żeby sortować.</p>
+            <div class="tablewrap"><table id="youthTable"><thead></thead><tbody></tbody></table></div>
+
+            <h3 class="section-h">Mapa umiejętności młodzieży</h3>
+            <p class="hint">Format <em>bieżąca / maks</em>. ★ = maks. osiągnięty. „—" = nieujawnione.</p>
+            <div class="tablewrap"><table id="youthSkillMap"><thead></thead><tbody></tbody></table></div>
+
+            <h3 class="section-h">Mapa ocen młodzieży</h3>
+            <div class="tablewrap"><table id="youthRatingMap"><thead></thead><tbody></tbody></table></div>
+
+            <h3 class="section-h">Mecze młodzieżowe</h3>
+            <div class="tablewrap"><table id="youthMatchTable"><thead></thead><tbody></tbody></table></div>
+
+            <h3 class="section-h">Zmiany w młodzieżówce</h3>
+            <div id="youthChangesBox"></div>
+
+            <h3 class="section-h">Planer awansu</h3>
+            <p class="hint">Wartość to <strong>bardzo zgrubny</strong> szacunek z potencjału. Rekomendacja: potencjał + dni do awansu.</p>
+            <div class="tablewrap"><table id="youthPlanner"><thead></thead><tbody></tbody></table></div>
+          </section>
+        </main>
+      </div>
+    </div>
+
+    <div id="picker" class="picker hidden">
+      <div class="picker-inner">
+        <div class="picker-head">
+          <span id="pickerTitle">Wybierz zawodnika</span>
+          <button id="pickerClose">✕</button>
+        </div>
+        <ul id="pickerList"></ul>
+      </div>
+    </div>
+
+    <script type="module" src="app.js"></script>
+    <script>
+      if ('serviceWorker' in navigator)
+        navigator.serviceWorker.register('sw.js').catch(() => {});
+    </script>
+  </body>
+</html>

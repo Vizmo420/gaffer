@@ -1,0 +1,33 @@
+{
+  "name": "gaffer",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Gaffer — open-source Hattrick manager assistant. Read-only CHPP client + web lineup optimiser, training projections, squad analysis, transfer scanner and league tracking.",
+  "license": "MIT",
+  "homepage": "https://github.com/USERNAME/gaffer",
+  "bin": {
+    "gaffer": "./cli.js"
+  },
+  "scripts": {
+    "sync": "node cli.js sync",
+    "squad": "node cli.js squad",
+    "youth": "node cli.js youth",
+    "matches": "node cli.js matches",
+    "chronicle": "node cli.js chronicle",
+    "web": "node scripts/serve-web.js",
+    "standalone": "node scripts/build-standalone.mjs",
+    "server": "node server.js"
+  },
+  "engines": {
+    "node": ">=22.5"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "fast-xml-parser": "^4.5.1"
+  },
+  "optionalDependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "express-session": "^1.18.1"
+  }
+}

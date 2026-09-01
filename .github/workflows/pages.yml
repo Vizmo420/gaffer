@@ -1,8 +1,8 @@
 name: Deploy demo to GitHub Pages
 
+# Uruchamiane TYLKO ręcznie (Actions -> Deploy demo to GitHub Pages -> Run workflow).
+# Pushowanie kodu na main NIE zmienia demo.
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 permissions:

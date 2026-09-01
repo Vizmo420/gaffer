@@ -4,7 +4,12 @@
   "type": "module",
   "description": "Gaffer — open-source Hattrick manager assistant. Read-only CHPP client + web lineup optimiser, training projections, squad analysis, transfer scanner and league tracking.",
   "license": "MIT",
-  "homepage": "https://github.com/USERNAME/gaffer",
+  "author": "Vizmo420",
+  "homepage": "https://github.com/Vizmo420/gaffer",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Vizmo420/gaffer.git"
+  },
   "bin": {
     "gaffer": "./cli.js"
   },

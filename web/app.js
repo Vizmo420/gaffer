@@ -288,11 +288,19 @@ $('#fileImport').addEventListener('change', (e) => {
   reader.onload = () => {
     const text = reader.result;
     if (/\.csv$/i.test(file.name) || /^[^\n]*Imię i nazwisko[^\n]*PlayerID/i.test(text)) {
+      const isYouth = /Wiek przy promowaniu|Liczba dni pozostałych do możliwości promowania/i.test(text);
       try {
-        const squad = parseSquadCsv(text);
-        if (!squad.players.length) throw new Error('nie rozpoznano żadnego wiersza');
-        applySquad(squad);
-        alert(`Wczytano ${squad.players.length} zawodników z CSV.`);
+        if (isYouth) {
+          const y = parseYouthCsv(text);
+          if (!y.players.length) throw new Error('nie rozpoznano żadnego wiersza');
+          applyYouth(y);
+          alert(`Wczytano ${y.players.length} zawodników akademii z CSV.`);
+        } else {
+          const squad = parseSquadCsv(text);
+          if (!squad.players.length) throw new Error('nie rozpoznano żadnego wiersza');
+          applySquad(squad);
+          alert(`Wczytano ${squad.players.length} zawodników z CSV.`);
+        }
       } catch (err) {
         alert('Nie udało się wczytać CSV: ' + err.message);
       }
@@ -438,6 +446,123 @@ function parseSquadCsv(text) {
   });
 
   return { teamName: 'Kadra z CSV', teamId: 0, players };
+}
+
+// ------------------------- import CSV akademii (eksport HT, PL) -------------------------
+
+function parseYouthCsv(text) {
+  const lines = text.replace(/^﻿/, '').split(/\r?\n/).filter((l) => l.trim());
+  if (lines.length < 2) throw new Error('za mało wierszy');
+  const head = csvLine(lines[0]).map((h) => h.trim().toLowerCase());
+  const col = (name) => head.indexOf(name.toLowerCase());
+  // każda umiejętność akademii to para kolumn: poziom + „/max"
+  const pair = (name) => {
+    const i = col(name);
+    if (i < 0) return [-1, -1];
+    return [i, head[i + 1] === name.toLowerCase() ? i + 1 : -1];
+  };
+  const idx = {
+    num: col('Numer na koszulce'),
+    name: col('Imię i nazwisko'),
+    id: col('PlayerID'),
+    spec: col('Specjalność'),
+    inj: col('Kontuzje'),
+    cards: col('Kartki'),
+    age: col('Wiek'),
+    days: col('Dni'),
+    promoIn: col('Liczba dni pozostałych do możliwości promowania'),
+    lastDate: col('Data ostatniego meczu'),
+    lastRating: col('Ostatnia ocena meczowa'),
+    lastPos: col('Pozycja w ostatnim meczu'),
+    keeper: pair('Bronienie'),
+    defending: pair('Defensywa'),
+    playmaking: pair('Rozgrywanie'),
+    winger: pair('Dośrodkowania'),
+    passing: pair('Podania'),
+    scoring: pair('Skuteczność'),
+    setPieces: pair('St. fragmenty'),
+  };
+  if (idx.name < 0 || idx.playmaking[0] < 0)
+    throw new Error('brak spodziewanych kolumn (to nie eksport akademii HT?)');
+
+  // „?" lub puste -> -1 ; „5" -> 5 ; „/6" -> 6 ; „/?" -> -1
+  const lvl = (v) => {
+    const s = String(v ?? '').trim().replace(/^\//, '');
+    if (!s || s === '?') return -1;
+    const x = parseInt(s, 10);
+    return Number.isFinite(x) ? x : -1;
+  };
+  const n = (v) => {
+    const x = parseFloat(String(v ?? '').replace(',', '.'));
+    return Number.isFinite(x) ? x : 0;
+  };
+  const parsePlDate = (s) => {
+    const m = String(s || '').match(/(\d{1,2})\.(\d{1,2})\.(\d{4})/);
+    return m ? new Date(+m[3], +m[2] - 1, +m[1]) : null;
+  };
+  const now = Date.now();
+
+  const players = lines
+    .slice(1)
+    .map((line) => {
+      const f = csvLine(line);
+      const full = (f[idx.name] || '').trim();
+      if (!full) return null;
+      const sp = full.indexOf(' ');
+      const specText = (f[idx.spec] || '').trim().toLowerCase();
+      const sk = (p) => [lvl(f[p[0]]), p[1] >= 0 ? lvl(f[p[1]]) : -1];
+      const [kp, kpM] = sk(idx.keeper);
+      const [df, dfM] = sk(idx.defending);
+      const [pm, pmM] = sk(idx.playmaking);
+      const [wg, wgM] = sk(idx.winger);
+      const [pa, paM] = sk(idx.passing);
+      const [sc, scM] = sk(idx.scoring);
+      const [st, stM] = sk(idx.setPieces);
+      const lastD = idx.lastDate >= 0 ? parsePlDate(f[idx.lastDate]) : null;
+      const lastRating = idx.lastRating >= 0 ? n(f[idx.lastRating]) : 0;
+      const slot = idx.lastPos >= 0 ? CSV_POS_PL[(f[idx.lastPos] || '').trim()] ?? null : null;
+      return {
+        id: n(f[idx.id]) || Math.floor(Math.random() * 1e9),
+        firstName: sp > 0 ? full.slice(0, sp) : full,
+        lastName: sp > 0 ? full.slice(sp + 1) : '',
+        nickName: '',
+        number: idx.num >= 0 && f[idx.num] ? n(f[idx.num]) : null,
+        age: n(f[idx.age]),
+        ageDays: n(f[idx.days]),
+        ageYears: Number((n(f[idx.age]) + n(f[idx.days]) / 112).toFixed(2)),
+        arrivalDate: null,
+        canBePromotedInDays: idx.promoIn >= 0 && f[idx.promoIn] !== '' ? n(f[idx.promoIn]) : null,
+        specialty: CSV_SPEC_PL[specText] ?? 0,
+        injuryLevel: idx.inj >= 0 && f[idx.inj] !== '' ? n(f[idx.inj]) : -1,
+        yellowCards: idx.cards >= 0 && f[idx.cards] !== '' ? n(f[idx.cards]) : 0,
+        ownerNotes: '',
+        scoutComment: '',
+        keeper: kp, keeperMax: kpM,
+        defending: df, defendingMax: dfM,
+        playmaking: pm, playmakingMax: pmM,
+        winger: wg, wingerMax: wgM,
+        passing: pa, passingMax: paM,
+        scoring: sc, scoringMax: scM,
+        setPieces: st, setPiecesMax: stM,
+        lastRating: lastRating > 0 ? lastRating : null,
+        form: 0,
+        stamina: 0,
+        loyalty: null,
+        motherClubBonus: null,
+        motherClubManual: false,
+        tsi: 0,
+        trained: false,
+        weeksSinceLastMatch: lastD ? Math.floor((now - lastD.getTime()) / (7 * 864e5)) : null,
+        isYouth: true,
+        recentRatings:
+          lastD && lastRating > 0
+            ? [{ matchId: 0, date: lastD.toISOString(), stars: lastRating, slot }]
+            : [],
+      };
+    })
+    .filter(Boolean);
+
+  return { teamName: 'Akademia z CSV', players, sourceFile: 'csv', matches: [] };
 }
 
 // ------------------------- nawigacja / powłoka -------------------------

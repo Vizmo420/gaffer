@@ -507,6 +507,7 @@ const NAV_BTNS = document.querySelectorAll('.sidenav button');
 NAV_BTNS.forEach((btn) => {
   btn.addEventListener('click', () => {
     NAV_BTNS.forEach((b) => b.classList.toggle('active', b === btn));
+    syncTabbar(btn.dataset.tab);
     document.querySelectorAll('.tab').forEach((t) => t.classList.remove('active'));
     $('#tab-' + btn.dataset.tab).classList.add('active');
     $('#viewTitle').textContent = btn.dataset.title || btn.textContent;
@@ -529,6 +530,28 @@ $('#navToggle')?.addEventListener('click', () => {
   $('#scrim').classList.toggle('show', open);
 });
 $('#scrim')?.addEventListener('click', closeNav);
+
+// dolny pasek (telefon): 4 główne sekcje + „Więcej" = szuflada ze wszystkimi zakładkami
+const TABBAR_MAIN = ['ai', 'optimizer', 'squad', 'youth'];
+function syncTabbar(tab) {
+  document.querySelectorAll('.tabbar button').forEach((b) => {
+    const on = b.dataset.go === tab || (b.dataset.go === 'more' && !TABBAR_MAIN.includes(tab));
+    b.classList.toggle('active', on);
+    if (on) b.setAttribute('aria-current', 'page');
+    else b.removeAttribute('aria-current');
+  });
+}
+document.querySelectorAll('.tabbar button').forEach((b) =>
+  b.addEventListener('click', () => {
+    if (b.dataset.go === 'more') {
+      const open = $('#sidebar').classList.toggle('open');
+      $('#scrim').classList.toggle('show', open);
+    } else showTab(b.dataset.go);
+  }),
+);
+$('#btnReload2')?.addEventListener('click', () => { closeNav(); $('#btnReload').click(); });
+$('#themeToggle2')?.addEventListener('click', () => $('#themeToggle').click());
+syncTabbar(document.querySelector('.sidenav button.active')?.dataset.tab);
 
 // motyw: brak wpisu = wg systemu; przełącznik ustawia jawnie light/dark
 const THEME_KEY = 'gaffer:theme';
@@ -2145,7 +2168,7 @@ function renderChanges() {
     return;
   }
   const list = (title, arr2, sign) =>
-    `<h3 class="section-h">${title} (${arr2.length})</h3>` +
+    `<h2 class="section-h">${title} (${arr2.length})</h2>` +
     (arr2.length
       ? '<ul class="chg">' +
         arr2.map((p) => `<li>${sign} ${p.name}${p.tsi ? ` <span class="hint">TSI ${p.tsi.toLocaleString('pl-PL')}</span>` : ''}</li>`).join('') +
@@ -2165,7 +2188,7 @@ function renderChanges() {
     `<p class="hint">Porównanie migawek: ${(c.prevAt || '').slice(0, 16)} → ${(c.currAt || '').slice(0, 16)}</p>` +
     list('Nowi w kadrze', c.added || [], '+') +
     list('Odeszli', c.removed || [], '−') +
-    `<h3 class="section-h">Zmiany umiejętności (${(c.changed || []).length})</h3>` +
+    `<h2 class="section-h">Zmiany umiejętności (${(c.changed || []).length})</h2>` +
     (ups ? `<ul class="chg">${ups}</ul>` : '<p class="hint">—</p>');
 }
 
@@ -2362,7 +2385,9 @@ function showLongText(text) {
 
 function buildAiContext() {
   const sk = (p) => [p.keeper, p.defending, p.playmaking, p.winger, p.passing, p.scoring, p.setPieces].join('/');
-  const lines = [buildReport(), '', '## Kadra seniorów', 'Umiejętności w kolejności: bronienie/defensywa/rozgrywanie/dośrodkowania/podania/skuteczność/stałe fragmenty (skala HT 0–20). Ostatnia ocena: gwiazdki HT i pozycja (GK=bramkarz, CD=środkowy obrońca, WB=boczny obrońca, IM=środkowy pomocnik, WI=skrzydłowy, FW=napastnik).', 'zawodnik | wiek | umiejętności | forma | kondycja | doświadczenie | TSI | pensja | specjalność | ostatnia ocena'];
+  // bez względnych sektorów Gaffera — model mylił je z ocenami meczowymi HT rywala
+  const report = buildReport().split('\n').filter((l) => !/^Sektory \(względne\)/.test(l)).join('\n');
+  const lines = [report, '', '## Kadra seniorów', 'Umiejętności w kolejności: bramkarstwo (HT „Bronienie”)/obrona (HT „Defensywa”)/rozgrywanie/dośrodkowania/podania/skuteczność/stałe fragmenty (skala HT 0–20). Ostatnia ocena: gwiazdki HT i pozycja (GK=bramkarz, CD=środkowy obrońca, WB=boczny obrońca, IM=środkowy pomocnik, WI=skrzydłowy, FW=napastnik).', 'zawodnik | wiek | umiejętności | forma | kondycja | doświadczenie | TSI | pensja | specjalność | ostatnia ocena'];
   for (const p of state.squad.players) {
     const last = (p.recentRatings || []).at(-1);
     lines.push(
@@ -2402,42 +2427,96 @@ function aiMarkdown(md) {
     if (list) html.push('</ul>');
     list = false;
     const h = line.match(/^#{1,4}\s+(.*)/);
-    if (h) html.push(`<h3 class="section-h">${h[1]}</h3>`);
+    if (h) html.push(`<h2 class="section-h">${h[1]}</h2>`);
     else if (line.trim()) html.push(`<p>${line}</p>`);
   }
   if (list) html.push('</ul>');
   return html.join('');
 }
 
+// Historia analiz trzymana na Pi (/api/ai/history), wspólna dla telefonu i komputera.
+let aiHistory = [];
+const fmtWhen = (iso) =>
+  new Date(iso).toLocaleString('pl-PL', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+const escHtml = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+
+function showAiEntry(e) {
+  $('#aiOut').innerHTML = aiMarkdown(e.text);
+  $('#aiStatus').textContent = `${fmtWhen(e.at)} · ${e.model}`;
+  document.querySelectorAll('#aiHistory li').forEach((li) => li.classList.toggle('current', li.dataset.id === e.id));
+}
+
+function renderAiHistory() {
+  const ol = $('#aiHistory');
+  if (!aiHistory.length) {
+    ol.innerHTML = '<li class="empty">Tu pojawi się każda analiza, z datą i pytaniem. Zacznij od „Przeanalizuj drużynę”.</li>';
+    return;
+  }
+  ol.innerHTML = aiHistory
+    .map(
+      (e) => `<li data-id="${escHtml(e.id)}">
+        <button class="ai-h-open"><span class="ai-h-when">${escHtml(fmtWhen(e.at))}</span>
+          <span class="ai-h-q">${escHtml(e.question || 'Pełny plan tygodnia')}</span></button>
+        <button class="ai-h-del icon-btn" aria-label="Usuń analizę z ${escHtml(fmtWhen(e.at))}" title="Usuń">
+          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12"/></svg></button>
+      </li>`,
+    )
+    .join('');
+  ol.querySelectorAll('li').forEach((li) => {
+    const e = aiHistory.find((x) => x.id === li.dataset.id);
+    li.querySelector('.ai-h-open').addEventListener('click', () => {
+      showAiEntry(e);
+      $('#aiOut').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+    li.querySelector('.ai-h-del').addEventListener('click', async () => {
+      if (!confirm('Usunąć tę analizę z historii?')) return;
+      const r = await fetch('api/ai/history?id=' + encodeURIComponent(e.id), { method: 'DELETE' }).catch(() => null);
+      if (!r?.ok) return toast('Nie udało się usunąć analizy.', true);
+      aiHistory = aiHistory.filter((x) => x.id !== e.id);
+      renderAiHistory();
+    });
+  });
+}
+
+async function loadAiHistory() {
+  try {
+    const r = await fetch('api/ai/history');
+    if (r.ok) aiHistory = await r.json();
+  } catch {
+    /* wersja bez serwera (standalone) — historii nie ma */
+  }
+  renderAiHistory();
+  if (aiHistory[0] && !$('#aiOut').innerHTML) showAiEntry(aiHistory[0]);
+}
+
 $('#btnAi')?.addEventListener('click', async () => {
   const btn = $('#btnAi');
   btn.disabled = true;
-  $('#aiStatus').textContent = 'Analizuję… (do minuty)';
+  btn.classList.add('loading');
+  $('#aiStatus').textContent = 'Analizuję… zwykle około 30 sekund';
+  $('#aiOut').classList.add('pending');
   try {
     const r = await fetch('api/ai', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ context: buildAiContext(), question: $('#aiQuestion').value.trim() }),
     });
-    const body = await r.json().catch(() => ({ error: 'Doradca AI działa tylko w wersji uruchomionej na Pi (npm run web).' }));
+    const body = await r.json().catch(() => ({ error: 'Doradca AI działa tylko w wersji uruchomionej na Pi.' }));
     if (!r.ok || body.error) throw new Error(body.error || `HTTP ${r.status}`);
-    $('#aiOut').innerHTML = aiMarkdown(body.text);
-    $('#aiStatus').textContent = `Model: ${body.model} · ${new Date().toLocaleTimeString('pl-PL')}`;
-    try { localStorage.setItem('gaffer:ai:last', JSON.stringify({ text: body.text, at: Date.now() })); } catch {}
+    aiHistory = [body, ...aiHistory.filter((x) => x.id !== body.id)];
+    renderAiHistory();
+    showAiEntry(body);
+    $('#aiQuestion').value = '';
   } catch (err) {
     $('#aiStatus').textContent = '';
-    $('#aiOut').innerHTML = `<p class="bad">${err.message.replace(/[<&]/g, '')}</p>`;
+    $('#aiOut').innerHTML = `<p class="bad">${escHtml(err.message)}</p>`;
   } finally {
     btn.disabled = false;
+    btn.classList.remove('loading');
+    $('#aiOut').classList.remove('pending');
   }
 });
-try {
-  const last = JSON.parse(localStorage.getItem('gaffer:ai:last'));
-  if (last?.text) {
-    $('#aiOut').innerHTML = aiMarkdown(last.text);
-    $('#aiStatus').textContent = `Ostatnia analiza: ${new Date(last.at).toLocaleString('pl-PL')}`;
-  }
-} catch {}
+loadAiHistory();
 
 // ------------------------- kalibracja wag z ocen -------------------------
 

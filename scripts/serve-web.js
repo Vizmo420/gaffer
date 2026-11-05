@@ -33,6 +33,7 @@ const server = http.createServer((req, res) => {
   const url = decodeURIComponent((req.url || '/').split('?')[0]);
 
   if (url === '/api/ai') return handleAi(req, res);
+  if (url === '/api/ai/history') return handleAiHistory(req, res);
 
   // /data/* -> katalog data/ (tylko pliki .json, tylko odczyt)
   if (url.startsWith('/data/')) {
@@ -68,7 +69,7 @@ optymalizatora składu, ekonomię i zmiany od poprzedniego importu. Oceny optyma
 społeczności, nie oficjalny silnik meczu.
 Cel: żeby drużyna była jak najlepsza w krótkim i długim terminie. Odpowiadaj po polsku, konkretnie,
 nazwiskami i liczbami z danych. Nie wymyślaj zawodników ani wartości, których nie ma w danych; gdy
-czegoś brakuje, napisz czego. Struktura (nagłówki Markdown ##):
+czegoś brakuje, napisz czego. Struktura pełnego planu (nagłówki Markdown ##):
 1. Skład i taktyka na najbliższy mecz (formacja, kto gdzie, kapitan, stałe fragmenty, zmiany).
 2. Trening na najbliższe tygodnie (typ treningu, kto zyska najwięcej, ryzyka wieku/pensji).
 3. Transfery (kogo sprzedać, jakiego profilu szukać, orientacyjny budżet).
@@ -81,6 +82,8 @@ Ważne zasady interpretacji:
   środkowy pomocnik, napastnik). Umiejętności nazywaj pełnymi słowami, nie skrótami.
 - Wychowankowie i lojalność 20 dają bonus do gry; uwzględnij to przed radą „sprzedaj”.
 - Trening działa tylko na zawodników, którzy grają w meczach na trenowanych pozycjach.
+Gdy menedżer zadał konkretne pytanie, odpowiedz TYLKO na nie (do ~250 słów, z konkretnymi nazwiskami),
+bez pełnego planu. Pełną strukturę 1–5 stosuj, gdy pytania nie ma.
 Bądź zwięzły: łącznie do ~450 słów.`;
 
 function readBody(req, limit = 300_000) {
@@ -97,6 +100,34 @@ function readBody(req, limit = 300_000) {
     req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
     req.on('error', reject);
   });
+}
+
+// Historia analiz: data/ai-history.json (lokalnie na Pi, wspólna dla wszystkich urządzeń).
+const AI_HISTORY = path.join(DATA_DIR, 'ai-history.json');
+const AI_HISTORY_MAX = 200;
+function readAiHistory() {
+  try {
+    return JSON.parse(fs.readFileSync(AI_HISTORY, 'utf8'));
+  } catch {
+    return [];
+  }
+}
+function saveAiEntry(entry) {
+  const list = [entry, ...readAiHistory()].slice(0, AI_HISTORY_MAX);
+  fs.writeFileSync(AI_HISTORY, JSON.stringify(list, null, 1));
+}
+function handleAiHistory(req, res) {
+  const json = (code, obj) => send(res, code, JSON.stringify(obj), MIME['.json']);
+  if (req.method === 'GET') return json(200, readAiHistory());
+  if (req.method === 'DELETE') {
+    const id = new URL(req.url, 'http://x').searchParams.get('id');
+    const list = readAiHistory();
+    const next = list.filter((e) => e.id !== id);
+    if (next.length === list.length) return json(404, { error: 'nie ma takiej analizy' });
+    fs.writeFileSync(AI_HISTORY, JSON.stringify(next, null, 1));
+    return json(200, { ok: true });
+  }
+  return json(405, { error: 'tylko GET / DELETE' });
 }
 
 async function handleAi(req, res) {
@@ -125,7 +156,13 @@ async function handleAi(req, res) {
     if (!r.ok) return json(502, { error: `Bramka AI odpowiedziała ${r.status}${body?.error?.message ? ': ' + body.error.message : ''}` });
     const text = body?.choices?.[0]?.message?.content;
     if (!text) return json(502, { error: 'Bramka AI zwróciła pustą odpowiedź.' });
-    return json(200, { text, model: body.model || AI.model });
+    const entry = { id: Date.now().toString(36), at: new Date().toISOString(), question: question ? String(question).slice(0, 2000) : '', text, model: body.model || AI.model };
+    try {
+      saveAiEntry(entry);
+    } catch (e) {
+      console.error('Nie zapisano historii AI:', e.message);
+    }
+    return json(200, entry);
   } catch (err) {
     return json(502, { error: 'Błąd doradcy AI: ' + err.message });
   }

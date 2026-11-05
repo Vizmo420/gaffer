@@ -46,9 +46,10 @@
           <h1 id="viewTitle">Optymalizator składu</h1>
           <div class="topbar-actions">
             <button id="btnReload" class="ghost sm" title="Wczytaj ponownie dane z folderu data/">↻ Dane</button>
-            <label class="filebtn sm">
+            <button id="btnPaste" class="ghost sm" title="Wklej eksport kadry lub akademii z HT (albo po prostu Ctrl+V na stronie)">Wklej</button>
+            <label class="filebtn sm" title="Wczytaj pliki CSV z HT (kadra i akademia naraz) albo JSON. Możesz też przeciągnąć pliki na okno.">
               Importuj
-              <input type="file" id="fileImport" accept="application/json" hidden />
+              <input type="file" id="fileImport" accept=".json,.csv,.tsv,.txt,application/json,text/csv" multiple hidden />
             </label>
             <button id="themeToggle" class="icon-btn" aria-label="Przełącz motyw" title="Przełącz motyw">◐</button>
           </div>
@@ -460,5 +461,17 @@
       if ('serviceWorker' in navigator)
         navigator.serviceWorker.register('sw.js').catch(() => {});
     </script>
+    <dialog id="pasteDialog" class="paste-dialog">
+      <form method="dialog">
+        <h2>Wklej eksport z Hattricka</h2>
+        <p class="hint">Kadra, akademia albo obie naraz. Rodzaj rozpoznam sam.</p>
+        <textarea id="pasteArea" rows="10" placeholder="Wklej tutaj (Ctrl+V / przytrzymaj → Wklej)"></textarea>
+        <div class="row-actions">
+          <button value="cancel" class="ghost sm">Anuluj</button>
+          <button id="pasteOk" value="ok" class="sm">Wczytaj</button>
+        </div>
+      </form>
+    </dialog>
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
   </body>
 </html>

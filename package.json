@@ -21,7 +21,8 @@
     "chronicle": "node cli.js chronicle",
     "web": "node scripts/serve-web.js",
     "standalone": "node scripts/build-standalone.mjs",
-    "server": "node server.js"
+    "server": "node server.js",
+    "test": "node --test \"test/*.test.mjs\""
   },
   "engines": {
     "node": ">=22.5"

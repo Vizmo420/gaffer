@@ -49,6 +49,7 @@ import {
   wageJumpRisk,
   trainingRoi,
 } from './training-calc.js';
+import { importText, diffImports } from './csv-import.js';
 
 // ------------------------- stan -------------------------
 
@@ -208,7 +209,7 @@ function renderFreshness(stamps, hasData) {
   const box = $('#freshness');
   if (!hasData) {
     box.className = 'freshness sample';
-    box.textContent = 'Tryb przykładowy — brak danych z CHPP. Uruchom „node cli.js sync" i „npm run web".';
+    box.textContent = 'Tryb przykładowy. Wklej eksport kadry lub akademii z HT (Ctrl+V albo „Wklej”), a dane zastąpią przykład.';
     return;
   }
   const newest = stamps.map((s) => new Date(s)).sort((a, b) => b - a)[0];
@@ -281,21 +282,187 @@ $('#btnReload').addEventListener('click', async () => {
   if (!ok) alert('Nie znaleziono plików w data/. Uruchom np. "node cli.js squad" i serwuj przez "npm run web".');
 });
 
-$('#fileImport').addEventListener('change', (e) => {
-  const file = e.target.files[0];
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = () => {
-    try {
-      const json = JSON.parse(reader.result);
-      if (json.sourceFile || /youth/i.test(file.name)) applyYouth(json);
-      else applySquad(json);
-    } catch (err) {
-      alert('Nieprawidłowy JSON: ' + err.message);
-    }
-  };
-  reader.readAsText(file);
+// ------------------------- import: plik / wklejenie / przeciągnięcie -------------------------
+// Rodzaj (seniorzy vs akademia) rozpoznaje csv-import.js. Każdy import jest
+// zapamiętywany w przeglądarce; zmiany liczą się same względem poprzedniego.
+
+const IMPORT_KEY = (kind) => `gaffer:import:${kind}`;
+
+function loadImportStore(kind) {
+  try {
+    return JSON.parse(localStorage.getItem(IMPORT_KEY(kind))) || {};
+  } catch {
+    return {};
+  }
+}
+
+// Zapisuje nowy import; jeśli nic się nie zmieniło, zachowuje poprzednią migawkę,
+// żeby porównanie nadal pokazywało ostatnią prawdziwą różnicę.
+function storeImport(kind, data) {
+  const store = loadImportStore(kind);
+  const next = { ...data, importedAt: new Date().toISOString() };
+  const same = store.curr && (() => {
+    const d = diffImports(store.curr, next);
+    return d.enough && !d.added.length && !d.removed.length && !d.changed.length;
+  })();
+  const out = same ? { prev: store.prev ?? null, curr: next } : { prev: store.curr ?? null, curr: next };
+  try {
+    localStorage.setItem(IMPORT_KEY(kind), JSON.stringify(out));
+  } catch {
+    /* pełny / prywatny localStorage — import działa, tylko bez pamięci */
+  }
+  return out;
+}
+
+function applyImported(kind, store) {
+  const diff = diffImports(store.prev, store.curr);
+  if (kind === 'senior') {
+    applySquad(store.curr);
+    state.changes = diff;
+    renderChanges();
+    renderSimilarControls();
+    renderCompareControls();
+  } else {
+    applyYouth(store.curr);
+    state.changesYouth = diff;
+    renderYouthChanges();
+  }
+  return diff;
+}
+
+function diffSummary(d) {
+  if (!d.enough) return 'pierwszy import, zmiany pokażą się przy następnym';
+  const ups = d.changed.reduce((n, c) => n + c.deltas.filter((x) => x.diff > 0).length, 0);
+  const parts = [];
+  if (ups) parts.push(`${ups}× wzrost umiejętności`);
+  if (d.added.length) parts.push(`${d.added.length} nowych`);
+  if (d.removed.length) parts.push(`${d.removed.length} odeszło`);
+  return parts.length ? parts.join(', ') : 'bez zmian od poprzedniego importu';
+}
+
+function importFromText(text) {
+  let res;
+  try {
+    res = importText(text);
+  } catch (err) {
+    toast('Nie udało się wczytać: ' + err.message, true);
+    return false;
+  }
+  const msgs = [];
+  for (const kind of ['senior', 'youth']) {
+    const data = res[kind];
+    if (!data?.players.length) continue;
+    const diff = applyImported(kind, storeImport(kind, data));
+    msgs.push(`${kind === 'senior' ? 'Seniorzy' : 'Akademia'}: ${data.players.length} ${data.players.length === 1 ? 'zawodnik' : 'zawodników'} (${diffSummary(diff)})`);
+  }
+  if (msgs.length) {
+    renderImportFreshness();
+    toast(msgs.join(' · '));
+    return true;
+  }
+  // nie CSV — może JSON z cli.js
+  try {
+    const json = JSON.parse(text);
+    if (json.sourceFile || json.players?.some?.((p) => p.isYouth)) applyYouth(json);
+    else applySquad(json);
+    toast('Wczytano plik JSON.');
+    return true;
+  } catch {
+    toast(
+      res.unknown
+        ? 'Nie rozpoznano, czy to kadra czy akademia. Wklej cały eksport razem z wierszem nagłówków.'
+        : 'Nie znaleziono wiersza nagłówków („Imię i nazwisko"…). Wklej eksport kadry lub akademii z HT.',
+      true,
+    );
+    return false;
+  }
+}
+
+async function importFiles(files) {
+  for (const f of files) importFromText(await f.text());
+}
+
+$('#fileImport').addEventListener('change', async (e) => {
+  await importFiles([...e.target.files]);
+  e.target.value = ''; // ten sam plik da się wczytać ponownie
 });
+
+// Ctrl+V gdziekolwiek poza polem tekstowym = import.
+document.addEventListener('paste', (e) => {
+  const t = e.target;
+  if (t.closest?.('input, textarea, select, [contenteditable="true"]')) return;
+  const text = e.clipboardData?.getData('text/plain');
+  if (!text || !/imię i nazwisko/i.test(text)) return;
+  e.preventDefault();
+  importFromText(text);
+});
+
+// Upuszczenie plików na okno.
+document.addEventListener('dragover', (e) => {
+  if (e.dataTransfer?.types?.includes('Files')) {
+    e.preventDefault();
+    document.body.classList.add('dropping');
+  }
+});
+document.addEventListener('dragleave', (e) => {
+  if (!e.relatedTarget) document.body.classList.remove('dropping');
+});
+document.addEventListener('drop', (e) => {
+  if (!e.dataTransfer?.files?.length) return;
+  e.preventDefault();
+  document.body.classList.remove('dropping');
+  importFiles([...e.dataTransfer.files]);
+});
+
+// Po starcie bez danych z CHPP: ostatnie importy z przeglądarki.
+function restoreImports() {
+  let any = false;
+  for (const kind of ['senior', 'youth']) {
+    const store = loadImportStore(kind);
+    if (store.curr?.players?.length) {
+      applyImported(kind, store);
+      any = true;
+    }
+  }
+  if (any) renderImportFreshness();
+  return any;
+}
+
+function renderImportFreshness() {
+  const s = loadImportStore('senior').curr?.importedAt;
+  const y = loadImportStore('youth').curr?.importedAt;
+  const ago = (iso) => {
+    if (!iso) return 'brak';
+    const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
+    return days <= 0 ? 'dzisiaj' : days === 1 ? 'wczoraj' : `${days} dni temu`;
+  };
+  const oldest = [s, y].filter(Boolean).map((x) => new Date(x)).sort((a, b) => a - b)[0];
+  const stale = oldest && Date.now() - oldest.getTime() >= 7 * 86400000;
+  const box = $('#freshness');
+  box.className = 'freshness' + (stale ? ' stale' : '');
+  box.textContent =
+    `Import z HT: seniorzy ${ago(s)}, akademia ${ago(y)}` +
+    (stale ? ' — wklej świeży eksport (Ctrl+V)' : '');
+}
+
+$('#btnPaste').addEventListener('click', () => {
+  $('#pasteArea').value = '';
+  $('#pasteDialog').showModal();
+  $('#pasteArea').focus();
+});
+$('#pasteDialog').addEventListener('close', () => {
+  const text = $('#pasteArea').value;
+  if ($('#pasteDialog').returnValue === 'ok' && text.trim()) importFromText(text);
+});
+
+let toastTimer;
+function toast(msg, isError = false) {
+  const el = $('#toast');
+  el.textContent = msg;
+  el.className = 'toast show' + (isError ? ' err' : '');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => (el.className = 'toast'), isError ? 8000 : 5000);
+}
 
 // ------------------------- nawigacja / powłoka -------------------------
 
@@ -931,7 +1098,7 @@ function renderYouthChanges() {
   if (!box) return;
   const c = state.changesYouth;
   if (!c || !c.enough) {
-    box.innerHTML = '<p class="hint">Brak. Uruchom <code>node cli.js youth</code> dwa razy w odstępie, potem <code>node cli.js changes --youth</code>.</p>';
+    box.innerHTML = '<p class="hint">Zmiany pojawią się same, gdy wkleisz eksport akademii drugi raz.</p>';
     return;
   }
   const ups = (c.changed || [])
@@ -1937,7 +2104,7 @@ function renderChanges() {
   const c = state.changes;
   if (!c || !c.enough) {
     box.innerHTML =
-      '<p class="hint">Brak danych. Zrób dwie migawki w odstępie czasu: <code>node cli.js snapshot</code>, potem <code>node cli.js changes</code>.</p>';
+      '<p class="hint">Zmiany pojawią się same, gdy wkleisz eksport kadry drugi raz (np. po treningu).</p>';
     return;
   }
   const list = (title, arr2, sign) =>
@@ -2403,7 +2570,10 @@ initOptimizerControls();
 $('#teamInfo').textContent = `${state.squad.teamName} — ${state.squad.players.length} zawodników (przykład)`;
 if (state.youthStarId == null) state.youthStarId = detectYouthStar(state.youth.players);
 loadFromServer().then((ok) => {
-  if (!ok) renderAll();
+  if (!ok) {
+    renderAll();
+    restoreImports();
+  }
   else {
     renderMatches();
     renderOpponentPreviews();

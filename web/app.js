@@ -72,6 +72,7 @@ const state = {
   transfers: structuredClone(SAMPLE_TRANSFERS),
   scout: structuredClone(SAMPLE_SCOUT),
   team: null,
+  club: null,
 };
 
 const $ = (s) => document.querySelector(s);
@@ -171,7 +172,16 @@ async function loadFromServer() {
     fetchJson('data/scout.json'),
   ]);
   if (scout) state.scout = scout;
+  if (squad) {
+    // prawdziwa kadra: bez przykładowych danych z demo w pozostałych zakładkach
+    state.matches = [];
+    state.chronicle = { teams: [] };
+    state.transfers = [];
+    if (!scout) state.scout = { results: [] };
+  }
   if (squad) applySquad(squad);
+  const club = await fetchJson('data/club.json');
+  if (club) applyClub(club);
   if (youth) applyYouth(youth);
   if (matches) {
     state.matches = matches.matches ?? matches;
@@ -203,6 +213,33 @@ async function loadFromServer() {
   const stamps = [squad?.fetchedAt, youth?.fetchedAt, matches?.fetchedAt, team?.fetchedAt, chronicle?.fetchedAt].filter(Boolean);
   renderFreshness(stamps, !!any);
   return !!any;
+}
+
+// Dane klubu spoza kadry (trening, sztab, finanse, liga, najbliższy rywal) —
+// bez CHPP przepisywane ze strony HT do data/club.json.
+function applyClub(club) {
+  state.club = club;
+  const t = club.training || {};
+  const set = (sel, v) => { if (v != null && $(sel)) $(sel).value = String(v); };
+  set('#trType', t.type); set('#trIntensity', t.intensity); set('#trStamina', t.stamina);
+  set('#trCoach', t.coachLevel); set('#trAssist', t.assistantsLevel);
+  if (t.type && [...$('#trainingType').options].some((o) => o.value === t.type)) $('#trainingType').value = t.type;
+  const r = club.nextMatch?.opponent?.ratings;
+  if (r) {
+    const avg = (...xs) => (xs.reduce((a, b) => a + b, 0) / xs.length).toFixed(2);
+    set('#oppDef', avg(r.prawaObrona, r.srodekObrony, r.lewaObrona));
+    set('#oppMid', r.pomoc);
+    set('#oppAtt', avg(r.prawyAtak, r.srodkowyAtak, r.lewyAtak));
+  }  renderTraining();
+  optimize();
+}
+
+function clubContext() {
+  const c = state.club;
+  if (!c) return '';
+  return ['', '## Klub, trening, finanse, liga i najbliższy rywal (JSON, stan ' + (c.fetchedAt || '').slice(0, 10) + ')', '```json',
+    JSON.stringify({ team: c.team, training: c.training, staff: c.staff, finance: c.finance, league: c.league, recentMatches: c.recentMatches, nextMatch: c.nextMatch }),
+    '```'].join('\n');
 }
 
 function renderFreshness(stamps, hasData) {
@@ -2345,7 +2382,7 @@ function buildAiContext() {
     lines.push('', '## Zmiany w akademii');
     (state.changesYouth.changed || []).forEach((x) => lines.push(`- ${x.name}: ${x.deltas.map((d) => `${d.skill} ${d.from}→${d.to}`).join(', ')}`));
   }
-  return lines.join('\n');
+  return lines.join('\n') + clubContext();
 }
 
 // Minimalny Markdown -> HTML (nagłówki, listy, pogrubienie); najpierw escapowanie.

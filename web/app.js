@@ -2362,7 +2362,7 @@ function showLongText(text) {
 
 function buildAiContext() {
   const sk = (p) => [p.keeper, p.defending, p.playmaking, p.winger, p.passing, p.scoring, p.setPieces].join('/');
-  const lines = [buildReport(), '', '## Kadra seniorów', 'zawodnik | wiek | BR/OB/RO/SK/PO/SKU/SF | forma | kondycja | dośw. | TSI | pensja | specjalność | ostatnia ocena'];
+  const lines = [buildReport(), '', '## Kadra seniorów', 'Umiejętności w kolejności: bronienie/defensywa/rozgrywanie/dośrodkowania/podania/skuteczność/stałe fragmenty (skala HT 0–20). Ostatnia ocena: gwiazdki HT i pozycja (GK=bramkarz, CD=środkowy obrońca, WB=boczny obrońca, IM=środkowy pomocnik, WI=skrzydłowy, FW=napastnik).', 'zawodnik | wiek | umiejętności | forma | kondycja | doświadczenie | TSI | pensja | specjalność | ostatnia ocena'];
   for (const p of state.squad.players) {
     const last = (p.recentRatings || []).at(-1);
     lines.push(
@@ -2372,7 +2372,7 @@ function buildAiContext() {
     );
   }
   if (state.youth?.players?.length) {
-    lines.push('', '## Akademia (poziom/max, -1 = nieodkryte)', 'zawodnik | wiek | BR/OB/RO/SK/PO/SKU/SF | max | promocja za (dni) | ostatnia ocena');
+    lines.push('', '## Akademia (poziom/max, -1 = nieodkryte)', 'zawodnik | wiek | umiejętności (ta sama kolejność) | maksima | promocja za (dni) | ostatnia ocena');
     for (const p of state.youth.players) {
       const mx = [p.keeperMax, p.defendingMax, p.playmakingMax, p.wingerMax, p.passingMax, p.scoringMax, p.setPiecesMax].join('/');
       lines.push([fullName(p), p.ageYears ?? p.age, sk(p), mx, p.canBePromotedInDays ?? '-', p.lastRating ?? '-'].join(' | '));

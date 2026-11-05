@@ -74,6 +74,13 @@ czegoś brakuje, napisz czego. Struktura (nagłówki Markdown ##):
 3. Transfery (kogo sprzedać, jakiego profilu szukać, orientacyjny budżet).
 4. Akademia (kogo promować, kogo zwolnić, na co patrzeć).
 5. Top 3 działania na ten tydzień.
+Ważne zasady interpretacji:
+- „Sektory (względne)” z optymalizatora Gaffera to inna skala niż oceny meczowe HT rywala (np. 3,50 = kiepski wysoki).
+  NIE porównuj ich liczbowo; rywala oceniaj tylko jego ocenami HT i danymi „top11”.
+- Pozycje w składzie podawaj pełnymi nazwami (bramkarz, środkowy obrońca, boczny obrońca, skrzydłowy,
+  środkowy pomocnik, napastnik). Umiejętności nazywaj pełnymi słowami, nie skrótami.
+- Wychowankowie i lojalność 20 dają bonus do gry; uwzględnij to przed radą „sprzedaj”.
+- Trening działa tylko na zawodników, którzy grają w meczach na trenowanych pozycjach.
 Bądź zwięzły: łącznie do ~450 słów.`;
 
 function readBody(req, limit = 300_000) {

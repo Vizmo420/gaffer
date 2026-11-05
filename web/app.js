@@ -223,7 +223,7 @@ function renderFreshness(stamps, hasData) {
     days <= 0 ? 'dzisiaj' : days === 1 ? 'wczoraj' : `${days} dni temu`;
   box.className = 'freshness' + (days >= 4 ? ' stale' : '');
   box.textContent =
-    `Dane z CHPP: ${label} (${newest.toLocaleString('pl-PL')})` +
+    `Dane: ${label} (${newest.toLocaleString('pl-PL')})` +
     (days >= 4 ? ' — rozważ „node cli.js sync"' : '');
 }
 

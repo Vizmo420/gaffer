@@ -9,3 +9,4 @@ data/*.sqlite-*
 hattrick-standalone.html
 .impeccable/
 
+data/*.csv

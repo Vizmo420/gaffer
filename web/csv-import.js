@@ -35,6 +35,14 @@ export function csvLine(line, delim = ',') {
   return out;
 }
 
+// Stałe ID z nazwiska, gdy brak PlayerID (np. tabela przepisana ręcznie) —
+// dzięki temu porównanie importów nadal paruje zawodników.
+export function nameId(name) {
+  let h = 2166136261;
+  for (const c of String(name).normalize('NFC')) h = Math.imul(h ^ c.codePointAt(0), 16777619);
+  return 1e9 + (h >>> 0);
+}
+
 const isHeader = (line) => /imię i nazwisko/i.test(line);
 
 // Dzieli tekst na bloki zaczynające się od wiersza nagłówka — wklejenie może
@@ -188,7 +196,7 @@ export function parseSquadCsv(text) {
     const lastRating = idx.lastRating >= 0 ? n(f[idx.lastRating]) : 0;
     const slot = idx.lastPos >= 0 ? CSV_POS_PL[(f[idx.lastPos] || '').trim()] ?? null : null;
     return {
-      id: n(f[idx.id]) || Math.floor(Math.random() * 1e9),
+      id: n(f[idx.id]) || nameId(full),
       firstName: sp > 0 ? full.slice(0, sp) : full,
       lastName: sp > 0 ? full.slice(sp + 1) : '',
       nickName: '',
@@ -305,7 +313,7 @@ export function parseYouthCsv(text) {
       const lastRating = idx.lastRating >= 0 ? n(f[idx.lastRating]) : 0;
       const slot = idx.lastPos >= 0 ? CSV_POS_PL[(f[idx.lastPos] || '').trim()] ?? null : null;
       return {
-        id: n(f[idx.id]) || Math.floor(Math.random() * 1e9),
+        id: n(f[idx.id]) || nameId(full),
         firstName: sp > 0 ? full.slice(0, sp) : full,
         lastName: sp > 0 ? full.slice(sp + 1) : '',
         nickName: '',

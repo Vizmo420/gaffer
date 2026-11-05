@@ -1,0 +1,6 @@
+[Unit]
+Description=Gaffer — czy telefon jest w domowym Wi-Fi?
+
+[Service]
+Type=oneshot
+ExecStart=%h/Desktop/Forma2/Strona/Hattrick/scripts/pi/gaffer-obecnosc.sh

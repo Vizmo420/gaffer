@@ -2320,6 +2320,88 @@ function showLongText(text) {
   }
 }
 
+// ------------------------- Doradca AI -------------------------
+// Wysyła podsumowanie do /api/ai (serve-web.js na Pi), klucz zostaje na serwerze.
+
+function buildAiContext() {
+  const sk = (p) => [p.keeper, p.defending, p.playmaking, p.winger, p.passing, p.scoring, p.setPieces].join('/');
+  const lines = [buildReport(), '', '## Kadra seniorów', 'zawodnik | wiek | BR/OB/RO/SK/PO/SKU/SF | forma | kondycja | dośw. | TSI | pensja | specjalność | ostatnia ocena'];
+  for (const p of state.squad.players) {
+    const last = (p.recentRatings || []).at(-1);
+    lines.push(
+      [fullName(p), p.ageYears ?? p.age, sk(p), p.form, p.stamina, p.experience, p.tsi, p.salary,
+        (p.specialty ? SPECIALTY[p.specialty] : null) || '-', last ? `${last.stars}★ ${last.slot ?? ''}` : '-'].join(' | ') +
+        (isSuspended(p) ? ' | ZAWIESZONY' : '') + (p.injuryLevel > 0 ? ` | kontuzja ${p.injuryLevel} tyg.` : ''),
+    );
+  }
+  if (state.youth?.players?.length) {
+    lines.push('', '## Akademia (poziom/max, -1 = nieodkryte)', 'zawodnik | wiek | BR/OB/RO/SK/PO/SKU/SF | max | promocja za (dni) | ostatnia ocena');
+    for (const p of state.youth.players) {
+      const mx = [p.keeperMax, p.defendingMax, p.playmakingMax, p.wingerMax, p.passingMax, p.scoringMax, p.setPiecesMax].join('/');
+      lines.push([fullName(p), p.ageYears ?? p.age, sk(p), mx, p.canBePromotedInDays ?? '-', p.lastRating ?? '-'].join(' | '));
+    }
+  }
+  if (state.changesYouth?.enough) {
+    lines.push('', '## Zmiany w akademii');
+    (state.changesYouth.changed || []).forEach((x) => lines.push(`- ${x.name}: ${x.deltas.map((d) => `${d.skill} ${d.from}→${d.to}`).join(', ')}`));
+  }
+  return lines.join('\n');
+}
+
+// Minimalny Markdown -> HTML (nagłówki, listy, pogrubienie); najpierw escapowanie.
+function aiMarkdown(md) {
+  const esc = md.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]);
+  const html = [];
+  let list = false;
+  for (const raw of esc.split('\n')) {
+    const line = raw.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    const li = line.match(/^\s*(?:[-*]|\d+\.)\s+(.*)/);
+    if (li) {
+      if (!list) html.push('<ul>');
+      list = true;
+      html.push(`<li>${li[1]}</li>`);
+      continue;
+    }
+    if (list) html.push('</ul>');
+    list = false;
+    const h = line.match(/^#{1,4}\s+(.*)/);
+    if (h) html.push(`<h3 class="section-h">${h[1]}</h3>`);
+    else if (line.trim()) html.push(`<p>${line}</p>`);
+  }
+  if (list) html.push('</ul>');
+  return html.join('');
+}
+
+$('#btnAi')?.addEventListener('click', async () => {
+  const btn = $('#btnAi');
+  btn.disabled = true;
+  $('#aiStatus').textContent = 'Analizuję… (do minuty)';
+  try {
+    const r = await fetch('api/ai', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ context: buildAiContext(), question: $('#aiQuestion').value.trim() }),
+    });
+    const body = await r.json().catch(() => ({ error: 'Doradca AI działa tylko w wersji uruchomionej na Pi (npm run web).' }));
+    if (!r.ok || body.error) throw new Error(body.error || `HTTP ${r.status}`);
+    $('#aiOut').innerHTML = aiMarkdown(body.text);
+    $('#aiStatus').textContent = `Model: ${body.model} · ${new Date().toLocaleTimeString('pl-PL')}`;
+    try { localStorage.setItem('gaffer:ai:last', JSON.stringify({ text: body.text, at: Date.now() })); } catch {}
+  } catch (err) {
+    $('#aiStatus').textContent = '';
+    $('#aiOut').innerHTML = `<p class="bad">${err.message.replace(/[<&]/g, '')}</p>`;
+  } finally {
+    btn.disabled = false;
+  }
+});
+try {
+  const last = JSON.parse(localStorage.getItem('gaffer:ai:last'));
+  if (last?.text) {
+    $('#aiOut').innerHTML = aiMarkdown(last.text);
+    $('#aiStatus').textContent = `Ostatnia analiza: ${new Date(last.at).toLocaleString('pl-PL')}`;
+  }
+} catch {}
+
 // ------------------------- kalibracja wag z ocen -------------------------
 
 function runCalibration() {

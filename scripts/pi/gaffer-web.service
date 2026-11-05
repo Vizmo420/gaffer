@@ -1,0 +1,9 @@
+[Unit]
+Description=Gaffer — interfejs w sieci domowej (port 5173)
+
+[Service]
+WorkingDirectory=%h/Desktop/Forma2/Strona/Hattrick
+EnvironmentFile=-%h/.config/gaffer/ai.env
+ExecStart=/usr/bin/env node scripts/serve-web.js
+Restart=on-failure
+MemoryMax=200M

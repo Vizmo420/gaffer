@@ -568,3 +568,10 @@ body.dropping .content { outline: 3px dashed var(--accent); outline-offset: -8px
 }
 .paste-dialog .row-actions { display: flex; justify-content: flex-end; gap: var(--sp-2); }
 @media (prefers-reduced-motion: reduce) { .toast { transition: none; } }
+
+/* ---------- Doradca AI ---------- */
+#tab-ai textarea { width: 100%; box-sizing: border-box; margin: var(--sp-2) 0; background: var(--panel); color: var(--text); border: 1px solid var(--line-2); border-radius: var(--radius-sm); padding: var(--sp-2); font: inherit; }
+#tab-ai .row-actions { display: flex; align-items: center; gap: var(--sp-3); }
+.ai-out { margin-top: var(--sp-4); max-width: 72ch; line-height: 1.55; }
+.ai-out ul { padding-left: 1.2em; }
+.ai-out .bad { color: var(--bad); }

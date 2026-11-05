@@ -199,6 +199,31 @@ schtasks /create /tn "Hattrick sync" /tr "cmd /c cd /d C:\Users\marti\Desktop\Fo
 
 (pierwsze uruchomienie musi być ręczne — trzeba raz wkleić kod logowania).
 
+## 5b. Na Raspberry Pi: start, gdy jesteś w domu + Doradca AI
+
+`scripts/pi/instaluj.sh` instaluje (systemd `--user`, bez roota):
+
+- `gaffer-web.service` — interfejs na `http://<ip-pi>:5173` w sieci domowej,
+- `gaffer-obecnosc.timer` — co minutę sprawdza, czy Twój telefon jest w Wi-Fi
+  (ping + ARP, bez roota). Telefon w sieci → start; brak przez `ABSENT_MINUTES`
+  (domyślnie 10) → stop.
+
+Konfiguracja w `~/.config/gaffer/`:
+
+- `obecnosc.env` → `PHONE_MAC=` adres Wi-Fi telefonu. Na iPhonie: Ustawienia → Wi-Fi →
+  (i) → „Prywatny adres Wi-Fi” ustaw na **Stały** i przepisz adres.
+  `scripts/pi/gaffer-obecnosc.sh urzadzenia` pokaże urządzenia w sieci,
+  `… status` co widzi teraz.
+- `ai.env` → `AI_GATEWAY_URL` / `AI_GATEWAY_KEY` / `AI_GATEWAY_MODEL` dowolnej bramki
+  zgodnej z OpenAI (np. lokalny OmniRoute). Klucz zostaje na Pi; przeglądarka wysyła
+  tylko podsumowanie drużyny do `/api/ai`.
+
+Zakładka **Doradca AI** łączy wynik optymalizatora, kadrę, akademię i zmiany i prosi
+model o plan: skład i taktyka, trening, transfery, akademia, 3 działania na tydzień.
+
+Gaffer **nie loguje się na hattrick.org i niczego tam nie zmienia** — automatyzacja
+konta poza CHPP łamie regulamin HT (ryzyko blokady). Zmiany wprowadzasz sam.
+
 ## 6. Tryb serwerowy (opcjonalny)
 
 Jeśli wolisz żywe API zamiast importu plików:

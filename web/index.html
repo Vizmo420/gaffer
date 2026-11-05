@@ -16,6 +16,8 @@
           <span class="logo-text">Gaffer</span>
         </div>
         <nav class="sidenav">
+          <p class="navgroup-label">Doradca</p>
+          <button data-tab="ai" data-title="Doradca AI">Doradca AI</button>
           <p class="navgroup-label">Skład</p>
           <button data-tab="optimizer" data-title="Optymalizator składu" class="active">Optymalizator</button>
           <button data-tab="training" data-title="Trening">Trening</button>
@@ -35,7 +37,7 @@
         </nav>
         <div class="sidebar-foot">
           <div class="team" id="teamInfo">Przykładowa kadra</div>
-          <p class="priv">Dane tylko lokalnie — nic nie trafia na żaden serwer.</p>
+          <p class="priv">Dane zostają u Ciebie. Tylko Doradca AI wysyła podsumowanie kadry do Twojej bramki AI.</p>
         </div>
       </aside>
       <div class="scrim" id="scrim"></div>
@@ -58,6 +60,18 @@
 
         <main>
           <!-- ---------------- KADRA ---------------- -->
+          <section id="tab-ai" class="tab">
+            <p class="hint">AI dostaje podsumowanie Twojej kadry, akademii, wynik optymalizatora i zmiany,
+              po czym proponuje skład, trening, transfery i ruchy w akademii. To rada, nie wyrocznia:
+              sprawdzaj ją z liczbami w pozostałych zakładkach.</p>
+            <textarea id="aiQuestion" rows="2" placeholder="Opcjonalnie: o co konkretnie zapytać (np. „gramy z liderem, bronić się czy atakować?”)"></textarea>
+            <div class="row-actions">
+              <button id="btnAi">Przeanalizuj drużynę</button>
+              <span id="aiStatus" class="hint"></span>
+            </div>
+            <article id="aiOut" class="ai-out"></article>
+          </section>
+
           <section id="tab-squad" class="tab">
             <p class="hint">
               Klik w nagłówek sortuje. Umiejętności i pola <em>Tren. / Wych. / Dni / Śr. ocena</em>

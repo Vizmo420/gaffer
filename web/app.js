@@ -501,6 +501,9 @@ function toast(msg, isError = false) {
   toastTimer = setTimeout(() => (el.className = 'toast'), isError ? 8000 : 5000);
 }
 
+// krótkie kody pozycji jak w Hattricku (telefon)
+const POS_SHORT = { GK: 'BR', CD: 'ŚO', WB: 'BO', WI: 'SK', IM: 'ŚP', FW: 'NP' };
+
 // ------------------------- nawigacja / powłoka -------------------------
 
 const NAV_BTNS = document.querySelectorAll('.sidenav button');
@@ -1819,8 +1822,8 @@ function renderPitch(pitchSel, titleSel, totalSel, lineup, opts, cfg) {
         (trained ? ' trained' : '') +
         (isStar ? ' star' : '');
       el.innerHTML =
-        `<div class="pos">${POSITION_LABEL[s.slot]}${isStar ? ' ★' : ''}</div>` +
-        `<div class="pname">${s.player ? fullName(s.player) : '—'}</div>` +
+        `<div class="pos" title="${POSITION_LABEL[s.slot]}"><span class="pos-long">${POSITION_LABEL[s.slot]}</span><span class="pos-short">${POS_SHORT[s.slot] ?? s.slot}</span>${isStar ? ' ★' : ''}</div>` +
+        `<div class="pname">${s.player ? `<span class="fn">${s.player.firstName ?? ''} </span>${s.player.lastName || fullName(s.player)}` : '—'}</div>` +
         `<div class="pscore">${s.player ? fmt(s.score) : ''}</div>`;
 
       if (ctx) {

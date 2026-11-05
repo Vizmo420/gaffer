@@ -49,6 +49,7 @@ import {
   wageJumpRisk,
   trainingRoi,
 } from './training-calc.js';
+import { importText, diffImports } from './csv-import.js';
 
 // ------------------------- stan -------------------------
 
@@ -208,7 +209,7 @@ function renderFreshness(stamps, hasData) {
   const box = $('#freshness');
   if (!hasData) {
     box.className = 'freshness sample';
-    box.textContent = 'Tryb przykładowy — brak danych z CHPP. Uruchom „node cli.js sync" i „npm run web".';
+    box.textContent = 'Tryb przykładowy. Wklej eksport kadry lub akademii z HT (Ctrl+V albo „Wklej”), a dane zastąpią przykład.';
     return;
   }
   const newest = stamps.map((s) => new Date(s)).sort((a, b) => b - a)[0];
@@ -281,288 +282,186 @@ $('#btnReload').addEventListener('click', async () => {
   if (!ok) alert('Nie znaleziono plików w data/. Uruchom np. "node cli.js squad" i serwuj przez "npm run web".');
 });
 
-$('#fileImport').addEventListener('change', (e) => {
-  const file = e.target.files[0];
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = () => {
-    const text = reader.result;
-    if (/\.csv$/i.test(file.name) || /^[^\n]*Imię i nazwisko[^\n]*PlayerID/i.test(text)) {
-      const isYouth = /Wiek przy promowaniu|Liczba dni pozostałych do możliwości promowania/i.test(text);
-      try {
-        if (isYouth) {
-          const y = parseYouthCsv(text);
-          if (!y.players.length) throw new Error('nie rozpoznano żadnego wiersza');
-          applyYouth(y);
-          alert(`Wczytano ${y.players.length} zawodników akademii z CSV.`);
-        } else {
-          const squad = parseSquadCsv(text);
-          if (!squad.players.length) throw new Error('nie rozpoznano żadnego wiersza');
-          applySquad(squad);
-          alert(`Wczytano ${squad.players.length} zawodników z CSV.`);
-        }
-      } catch (err) {
-        alert('Nie udało się wczytać CSV: ' + err.message);
-      }
-      return;
-    }
-    try {
-      const json = JSON.parse(text);
-      if (json.sourceFile || /youth/i.test(file.name)) applyYouth(json);
-      else applySquad(json);
-    } catch (err) {
-      alert('Nieprawidłowy plik (nie CSV ani JSON): ' + err.message);
-    }
-  };
-  reader.readAsText(file);
-});
+// ------------------------- import: plik / wklejenie / przeciągnięcie -------------------------
+// Rodzaj (seniorzy vs akademia) rozpoznaje csv-import.js. Każdy import jest
+// zapamiętywany w przeglądarce; zmiany liczą się same względem poprzedniego.
 
-// ------------------------- import CSV kadry (eksport HT, PL) -------------------------
+const IMPORT_KEY = (kind) => `gaffer:import:${kind}`;
 
-const CSV_SPEC_PL = {
-  techniczny: 1, szybki: 2, mocarny: 3, 'atletyczny': 3, nieprzewidywalny: 4,
-  'gra głową': 5, 'głowa': 5, regenerujący: 6, wsparcie: 8,
-};
-// Kod pozycji z „Pozycja w ostatnim meczu" -> typ slotu.
-const CSV_POS_PL = {
-  BR: 'GK',
-  ST: 'CD', 'ŚO': 'CD', SO: 'CD',
-  BO: 'WB', LO: 'WB', PO: 'WB', LB: 'WB', PB: 'WB',
-  LS: 'WI', PS: 'WI', 'Ś': 'WI', SK: 'WI', 'LŚ': 'WI', 'PŚ': 'WI',
-  PM: 'IM', 'ŚP': 'IM', SP: 'IM',
-  NP: 'FW', NA: 'FW',
-};
-
-function csvLine(line) {
-  const out = [];
-  let cur = '', q = false;
-  for (let i = 0; i < line.length; i++) {
-    const c = line[i];
-    if (q) {
-      if (c === '"' && line[i + 1] === '"') { cur += '"'; i++; }
-      else if (c === '"') q = false;
-      else cur += c;
-    } else if (c === '"') q = true;
-    else if (c === ',') { out.push(cur); cur = ''; }
-    else cur += c;
+function loadImportStore(kind) {
+  try {
+    return JSON.parse(localStorage.getItem(IMPORT_KEY(kind))) || {};
+  } catch {
+    return {};
   }
-  out.push(cur);
+}
+
+// Zapisuje nowy import; jeśli nic się nie zmieniło, zachowuje poprzednią migawkę,
+// żeby porównanie nadal pokazywało ostatnią prawdziwą różnicę.
+function storeImport(kind, data) {
+  const store = loadImportStore(kind);
+  const next = { ...data, importedAt: new Date().toISOString() };
+  const same = store.curr && (() => {
+    const d = diffImports(store.curr, next);
+    return d.enough && !d.added.length && !d.removed.length && !d.changed.length;
+  })();
+  const out = same ? { prev: store.prev ?? null, curr: next } : { prev: store.curr ?? null, curr: next };
+  try {
+    localStorage.setItem(IMPORT_KEY(kind), JSON.stringify(out));
+  } catch {
+    /* pełny / prywatny localStorage — import działa, tylko bez pamięci */
+  }
   return out;
 }
 
-function parseSquadCsv(text) {
-  const lines = text.replace(/^﻿/, '').split(/\r?\n/).filter((l) => l.trim());
-  if (lines.length < 2) throw new Error('za mało wierszy');
-  const head = csvLine(lines[0]).map((h) => h.trim().toLowerCase());
-  const col = (name) => head.indexOf(name.toLowerCase());
-  const idx = {
-    num: col('Numer na koszulce'),
-    name: col('Imię i nazwisko'),
-    id: col('PlayerID'),
-    spec: col('Specjalność'),
-    mcb: col('Wychowanek'),
-    inj: col('Kontuzje'),
-    cards: col('Kartki'),
-    tl: col('Wystawiony na sprzedaż'),
-    age: col('Wiek'),
-    days: col('Dni'),
-    tsi: col('TSI'),
-    salary: col('Pensja'),
-    weeksClub: col('Liczba tygodni w klubie'),
-    xp: col('Doświadczenie'),
-    ld: col('Przywódca'),
-    loy: col('Lojalność'),
-    form: col('Forma'),
-    stamina: col('Kondycja'),
-    keeper: col('Bronienie'),
-    defending: col('Defensywa'),
-    playmaking: col('Rozgrywanie'),
-    winger: col('Dośrodkowania'),
-    passing: col('Podania'),
-    scoring: col('Skuteczność'),
-    setPieces: col('St. fragmenty'),
-    lastDate: col('Data ostatniego meczu'),
-    lastRating: col('Ostatnia ocena meczowa'),
-    lastPos: col('Pozycja w ostatnim meczu'),
-  };
-  if (idx.name < 0 || idx.playmaking < 0) throw new Error('brak spodziewanych kolumn (to nie eksport kadry HT?)');
-
-  const n = (v) => {
-    const x = parseFloat(String(v ?? '').replace(',', '.'));
-    return Number.isFinite(x) ? x : 0;
-  };
-  const parsePlDate = (s) => {
-    const m = String(s || '').match(/(\d{1,2})\.(\d{1,2})\.(\d{4})/);
-    return m ? new Date(+m[3], +m[2] - 1, +m[1]) : null;
-  };
-  const now = Date.now();
-
-  const players = lines.slice(1).map((line) => {
-    const f = csvLine(line);
-    const full = (f[idx.name] || '').trim();
-    const sp = full.indexOf(' ');
-    const specText = (f[idx.spec] || '').trim().toLowerCase();
-    const lastD = idx.lastDate >= 0 ? parsePlDate(f[idx.lastDate]) : null;
-    const lastRating = idx.lastRating >= 0 ? n(f[idx.lastRating]) : 0;
-    const slot = idx.lastPos >= 0 ? CSV_POS_PL[(f[idx.lastPos] || '').trim()] ?? null : null;
-    return {
-      id: n(f[idx.id]) || Math.floor(Math.random() * 1e9),
-      firstName: sp > 0 ? full.slice(0, sp) : full,
-      lastName: sp > 0 ? full.slice(sp + 1) : '',
-      nickName: '',
-      number: idx.num >= 0 && f[idx.num] ? n(f[idx.num]) : null,
-      age: n(f[idx.age]),
-      ageDays: n(f[idx.days]),
-      ageYears: Number((n(f[idx.age]) + n(f[idx.days]) / 112).toFixed(2)),
-      form: n(f[idx.form]),
-      stamina: n(f[idx.stamina]),
-      experience: n(f[idx.xp]),
-      leadership: n(f[idx.ld]),
-      loyalty: idx.loy >= 0 && f[idx.loy] !== '' ? n(f[idx.loy]) : null,
-      motherClubBonus: idx.mcb >= 0 ? String(f[idx.mcb]).trim() === '1' : null,
-      motherClubManual: false,
-      keeper: n(f[idx.keeper]),
-      defending: n(f[idx.defending]),
-      playmaking: n(f[idx.playmaking]),
-      winger: n(f[idx.winger]),
-      passing: n(f[idx.passing]),
-      scoring: n(f[idx.scoring]),
-      setPieces: n(f[idx.setPieces]),
-      tsi: n(f[idx.tsi]),
-      salary: n(f[idx.salary]),
-      specialty: CSV_SPEC_PL[specText] ?? 0,
-      injuryLevel: idx.inj >= 0 && f[idx.inj] !== '' ? n(f[idx.inj]) : -1,
-      yellowCards: idx.cards >= 0 && f[idx.cards] !== '' ? n(f[idx.cards]) : 0,
-      transferListed: idx.tl >= 0 ? String(f[idx.tl]).trim() === '1' : false,
-      daysAtClub: idx.weeksClub >= 0 && f[idx.weeksClub] !== '' ? n(f[idx.weeksClub]) * 7 : null,
-      trained: false,
-      manualRating: null,
-      weeksSinceLastMatch: lastD ? Math.floor((now - lastD.getTime()) / (7 * 864e5)) : null,
-      recentRatings:
-        lastD && lastRating > 0
-          ? [{ matchId: 0, date: lastD.toISOString(), stars: lastRating, slot }]
-          : [],
-    };
-  });
-
-  return { teamName: 'Kadra z CSV', teamId: 0, players };
+function applyImported(kind, store) {
+  const diff = diffImports(store.prev, store.curr);
+  if (kind === 'senior') {
+    applySquad(store.curr);
+    state.changes = diff;
+    renderChanges();
+    renderSimilarControls();
+    renderCompareControls();
+  } else {
+    applyYouth(store.curr);
+    state.changesYouth = diff;
+    renderYouthChanges();
+  }
+  return diff;
 }
 
-// ------------------------- import CSV akademii (eksport HT, PL) -------------------------
+function diffSummary(d) {
+  if (!d.enough) return 'pierwszy import, zmiany pokażą się przy następnym';
+  const ups = d.changed.reduce((n, c) => n + c.deltas.filter((x) => x.diff > 0).length, 0);
+  const parts = [];
+  if (ups) parts.push(`${ups}× wzrost umiejętności`);
+  if (d.added.length) parts.push(`${d.added.length} nowych`);
+  if (d.removed.length) parts.push(`${d.removed.length} odeszło`);
+  return parts.length ? parts.join(', ') : 'bez zmian od poprzedniego importu';
+}
 
-function parseYouthCsv(text) {
-  const lines = text.replace(/^﻿/, '').split(/\r?\n/).filter((l) => l.trim());
-  if (lines.length < 2) throw new Error('za mało wierszy');
-  const head = csvLine(lines[0]).map((h) => h.trim().toLowerCase());
-  const col = (name) => head.indexOf(name.toLowerCase());
-  // każda umiejętność akademii to para kolumn: poziom + „/max"
-  const pair = (name) => {
-    const i = col(name);
-    if (i < 0) return [-1, -1];
-    return [i, head[i + 1] === name.toLowerCase() ? i + 1 : -1];
-  };
-  const idx = {
-    num: col('Numer na koszulce'),
-    name: col('Imię i nazwisko'),
-    id: col('PlayerID'),
-    spec: col('Specjalność'),
-    inj: col('Kontuzje'),
-    cards: col('Kartki'),
-    age: col('Wiek'),
-    days: col('Dni'),
-    promoIn: col('Liczba dni pozostałych do możliwości promowania'),
-    lastDate: col('Data ostatniego meczu'),
-    lastRating: col('Ostatnia ocena meczowa'),
-    lastPos: col('Pozycja w ostatnim meczu'),
-    keeper: pair('Bronienie'),
-    defending: pair('Defensywa'),
-    playmaking: pair('Rozgrywanie'),
-    winger: pair('Dośrodkowania'),
-    passing: pair('Podania'),
-    scoring: pair('Skuteczność'),
-    setPieces: pair('St. fragmenty'),
-  };
-  if (idx.name < 0 || idx.playmaking[0] < 0)
-    throw new Error('brak spodziewanych kolumn (to nie eksport akademii HT?)');
+function importFromText(text) {
+  let res;
+  try {
+    res = importText(text);
+  } catch (err) {
+    toast('Nie udało się wczytać: ' + err.message, true);
+    return false;
+  }
+  const msgs = [];
+  for (const kind of ['senior', 'youth']) {
+    const data = res[kind];
+    if (!data?.players.length) continue;
+    const diff = applyImported(kind, storeImport(kind, data));
+    msgs.push(`${kind === 'senior' ? 'Seniorzy' : 'Akademia'}: ${data.players.length} ${data.players.length === 1 ? 'zawodnik' : 'zawodników'} (${diffSummary(diff)})`);
+  }
+  if (msgs.length) {
+    renderImportFreshness();
+    toast(msgs.join(' · '));
+    return true;
+  }
+  // nie CSV — może JSON z cli.js
+  try {
+    const json = JSON.parse(text);
+    if (json.sourceFile || json.players?.some?.((p) => p.isYouth)) applyYouth(json);
+    else applySquad(json);
+    toast('Wczytano plik JSON.');
+    return true;
+  } catch {
+    toast(
+      res.unknown
+        ? 'Nie rozpoznano, czy to kadra czy akademia. Wklej cały eksport razem z wierszem nagłówków.'
+        : 'Nie znaleziono wiersza nagłówków („Imię i nazwisko"…). Wklej eksport kadry lub akademii z HT.',
+      true,
+    );
+    return false;
+  }
+}
 
-  // „?" lub puste -> -1 ; „5" -> 5 ; „/6" -> 6 ; „/?" -> -1
-  const lvl = (v) => {
-    const s = String(v ?? '').trim().replace(/^\//, '');
-    if (!s || s === '?') return -1;
-    const x = parseInt(s, 10);
-    return Number.isFinite(x) ? x : -1;
-  };
-  const n = (v) => {
-    const x = parseFloat(String(v ?? '').replace(',', '.'));
-    return Number.isFinite(x) ? x : 0;
-  };
-  const parsePlDate = (s) => {
-    const m = String(s || '').match(/(\d{1,2})\.(\d{1,2})\.(\d{4})/);
-    return m ? new Date(+m[3], +m[2] - 1, +m[1]) : null;
-  };
-  const now = Date.now();
+async function importFiles(files) {
+  for (const f of files) importFromText(await f.text());
+}
 
-  const players = lines
-    .slice(1)
-    .map((line) => {
-      const f = csvLine(line);
-      const full = (f[idx.name] || '').trim();
-      if (!full) return null;
-      const sp = full.indexOf(' ');
-      const specText = (f[idx.spec] || '').trim().toLowerCase();
-      const sk = (p) => [lvl(f[p[0]]), p[1] >= 0 ? lvl(f[p[1]]) : -1];
-      const [kp, kpM] = sk(idx.keeper);
-      const [df, dfM] = sk(idx.defending);
-      const [pm, pmM] = sk(idx.playmaking);
-      const [wg, wgM] = sk(idx.winger);
-      const [pa, paM] = sk(idx.passing);
-      const [sc, scM] = sk(idx.scoring);
-      const [st, stM] = sk(idx.setPieces);
-      const lastD = idx.lastDate >= 0 ? parsePlDate(f[idx.lastDate]) : null;
-      const lastRating = idx.lastRating >= 0 ? n(f[idx.lastRating]) : 0;
-      const slot = idx.lastPos >= 0 ? CSV_POS_PL[(f[idx.lastPos] || '').trim()] ?? null : null;
-      return {
-        id: n(f[idx.id]) || Math.floor(Math.random() * 1e9),
-        firstName: sp > 0 ? full.slice(0, sp) : full,
-        lastName: sp > 0 ? full.slice(sp + 1) : '',
-        nickName: '',
-        number: idx.num >= 0 && f[idx.num] ? n(f[idx.num]) : null,
-        age: n(f[idx.age]),
-        ageDays: n(f[idx.days]),
-        ageYears: Number((n(f[idx.age]) + n(f[idx.days]) / 112).toFixed(2)),
-        arrivalDate: null,
-        canBePromotedInDays: idx.promoIn >= 0 && f[idx.promoIn] !== '' ? n(f[idx.promoIn]) : null,
-        specialty: CSV_SPEC_PL[specText] ?? 0,
-        injuryLevel: idx.inj >= 0 && f[idx.inj] !== '' ? n(f[idx.inj]) : -1,
-        yellowCards: idx.cards >= 0 && f[idx.cards] !== '' ? n(f[idx.cards]) : 0,
-        ownerNotes: '',
-        scoutComment: '',
-        keeper: kp, keeperMax: kpM,
-        defending: df, defendingMax: dfM,
-        playmaking: pm, playmakingMax: pmM,
-        winger: wg, wingerMax: wgM,
-        passing: pa, passingMax: paM,
-        scoring: sc, scoringMax: scM,
-        setPieces: st, setPiecesMax: stM,
-        lastRating: lastRating > 0 ? lastRating : null,
-        form: 0,
-        stamina: 0,
-        loyalty: null,
-        motherClubBonus: null,
-        motherClubManual: false,
-        tsi: 0,
-        trained: false,
-        weeksSinceLastMatch: lastD ? Math.floor((now - lastD.getTime()) / (7 * 864e5)) : null,
-        isYouth: true,
-        recentRatings:
-          lastD && lastRating > 0
-            ? [{ matchId: 0, date: lastD.toISOString(), stars: lastRating, slot }]
-            : [],
-      };
-    })
-    .filter(Boolean);
+$('#fileImport').addEventListener('change', async (e) => {
+  await importFiles([...e.target.files]);
+  e.target.value = ''; // ten sam plik da się wczytać ponownie
+});
 
-  return { teamName: 'Akademia z CSV', players, sourceFile: 'csv', matches: [] };
+// Ctrl+V gdziekolwiek poza polem tekstowym = import.
+document.addEventListener('paste', (e) => {
+  const t = e.target;
+  if (t.closest?.('input, textarea, select, [contenteditable="true"]')) return;
+  const text = e.clipboardData?.getData('text/plain');
+  if (!text || !/imię i nazwisko/i.test(text)) return;
+  e.preventDefault();
+  importFromText(text);
+});
+
+// Upuszczenie plików na okno.
+document.addEventListener('dragover', (e) => {
+  if (e.dataTransfer?.types?.includes('Files')) {
+    e.preventDefault();
+    document.body.classList.add('dropping');
+  }
+});
+document.addEventListener('dragleave', (e) => {
+  if (!e.relatedTarget) document.body.classList.remove('dropping');
+});
+document.addEventListener('drop', (e) => {
+  if (!e.dataTransfer?.files?.length) return;
+  e.preventDefault();
+  document.body.classList.remove('dropping');
+  importFiles([...e.dataTransfer.files]);
+});
+
+// Po starcie bez danych z CHPP: ostatnie importy z przeglądarki.
+function restoreImports() {
+  let any = false;
+  for (const kind of ['senior', 'youth']) {
+    const store = loadImportStore(kind);
+    if (store.curr?.players?.length) {
+      applyImported(kind, store);
+      any = true;
+    }
+  }
+  if (any) renderImportFreshness();
+  return any;
+}
+
+function renderImportFreshness() {
+  const s = loadImportStore('senior').curr?.importedAt;
+  const y = loadImportStore('youth').curr?.importedAt;
+  const ago = (iso) => {
+    if (!iso) return 'brak';
+    const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
+    return days <= 0 ? 'dzisiaj' : days === 1 ? 'wczoraj' : `${days} dni temu`;
+  };
+  const oldest = [s, y].filter(Boolean).map((x) => new Date(x)).sort((a, b) => a - b)[0];
+  const stale = oldest && Date.now() - oldest.getTime() >= 7 * 86400000;
+  const box = $('#freshness');
+  box.className = 'freshness' + (stale ? ' stale' : '');
+  box.textContent =
+    `Import z HT: seniorzy ${ago(s)}, akademia ${ago(y)}` +
+    (stale ? ' — wklej świeży eksport (Ctrl+V)' : '');
+}
+
+$('#btnPaste').addEventListener('click', () => {
+  $('#pasteArea').value = '';
+  $('#pasteDialog').showModal();
+  $('#pasteArea').focus();
+});
+$('#pasteDialog').addEventListener('close', () => {
+  const text = $('#pasteArea').value;
+  if ($('#pasteDialog').returnValue === 'ok' && text.trim()) importFromText(text);
+});
+
+let toastTimer;
+function toast(msg, isError = false) {
+  const el = $('#toast');
+  el.textContent = msg;
+  el.className = 'toast show' + (isError ? ' err' : '');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => (el.className = 'toast'), isError ? 8000 : 5000);
 }
 
 // ------------------------- nawigacja / powłoka -------------------------
@@ -1199,7 +1098,7 @@ function renderYouthChanges() {
   if (!box) return;
   const c = state.changesYouth;
   if (!c || !c.enough) {
-    box.innerHTML = '<p class="hint">Brak. Uruchom <code>node cli.js youth</code> dwa razy w odstępie, potem <code>node cli.js changes --youth</code>.</p>';
+    box.innerHTML = '<p class="hint">Zmiany pojawią się same, gdy wkleisz eksport akademii drugi raz.</p>';
     return;
   }
   const ups = (c.changed || [])
@@ -2205,7 +2104,7 @@ function renderChanges() {
   const c = state.changes;
   if (!c || !c.enough) {
     box.innerHTML =
-      '<p class="hint">Brak danych. Zrób dwie migawki w odstępie czasu: <code>node cli.js snapshot</code>, potem <code>node cli.js changes</code>.</p>';
+      '<p class="hint">Zmiany pojawią się same, gdy wkleisz eksport kadry drugi raz (np. po treningu).</p>';
     return;
   }
   const list = (title, arr2, sign) =>
@@ -2671,7 +2570,10 @@ initOptimizerControls();
 $('#teamInfo').textContent = `${state.squad.teamName} — ${state.squad.players.length} zawodników (przykład)`;
 if (state.youthStarId == null) state.youthStarId = detectYouthStar(state.youth.players);
 loadFromServer().then((ok) => {
-  if (!ok) renderAll();
+  if (!ok) {
+    renderAll();
+    restoreImports();
+  }
   else {
     renderMatches();
     renderOpponentPreviews();

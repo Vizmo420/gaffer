@@ -544,3 +544,27 @@ td.cmp-lo { color: var(--muted); }
 @media (prefers-reduced-motion: reduce) {
   * { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
 }
+
+/* ---------- import: wklejanie / przeciąganie / komunikat ---------- */
+.toast {
+  position: fixed; left: 50%; bottom: 20px; transform: translate(-50%, 16px);
+  max-width: min(92vw, 640px); padding: 10px 16px; border-radius: var(--radius-sm);
+  background: var(--text); color: var(--panel); font-size: 13px; line-height: 1.4;
+  box-shadow: var(--shadow-pop); opacity: 0; pointer-events: none; z-index: 100;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+.toast.show { opacity: 1; transform: translate(-50%, 0); }
+.toast.err { background: var(--bad); color: #fff; }
+body.dropping .content { outline: 3px dashed var(--accent); outline-offset: -8px; }
+.paste-dialog {
+  width: min(92vw, 640px); border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--panel); color: var(--text); padding: var(--sp-4); box-shadow: var(--shadow-pop);
+}
+.paste-dialog::backdrop { background: rgba(10, 14, 18, 0.45); backdrop-filter: blur(2px); }
+.paste-dialog h2 { margin: 0 0 var(--sp-1); font-size: 16px; }
+.paste-dialog textarea {
+  width: 100%; box-sizing: border-box; margin: var(--sp-2) 0; font: 12px/1.4 'IBM Plex Mono', monospace;
+  background: var(--panel-2); color: var(--text); border: 1px solid var(--line-2); border-radius: var(--radius-sm); padding: var(--sp-2);
+}
+.paste-dialog .row-actions { display: flex; justify-content: flex-end; gap: var(--sp-2); }
+@media (prefers-reduced-motion: reduce) { .toast { transition: none; } }

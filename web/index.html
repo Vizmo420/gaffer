@@ -227,7 +227,27 @@
                 <div id="pitch" class="pitch"></div>
                 <p class="hint small">Klik w slot = ranking i blokada. Przeciągnij = zamiana. Klik w liczbę = rozbicie oceny.</p>
                 <div id="closeCalls" class="training-report"></div>
-                <div id="sectors" class="sectors"></div>
+                <section class="predict" aria-labelledby="predTitle">
+                  <div class="predict-head">
+                    <h3 id="predTitle">Prognoza meczu</h3>
+                    <span id="predOpp" class="hint"></span>
+                  </div>
+                  <div class="predict-controls">
+                    <label><span>Miejsce</span><select id="predLoc"><option value="home">u siebie</option><option value="away">na wyjeździe</option><option value="derby">derby</option></select></label>
+                    <label><span>Taktyka</span><select id="predTactic"><option value="normal">normalna</option><option value="aim">atak środkiem</option><option value="aow">atak skrzydłami</option><option value="creative">gra kreatywna</option><option value="counter">kontratak</option><option value="longshots">strzały z dystansu</option></select></label>
+                    <label><span>Nastawienie</span><select id="predAttitude"><option value="normal">normalne</option><option value="pic">na luzie (PIC)</option><option value="mots">mecz sezonu (MOTS)</option></select></label>
+                    <label><span>Nastrój</span><select id="predSpirit"><option value="0">0</option><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5 – spokojni</option><option value="6">6</option><option value="7">7</option><option value="8">8</option><option value="9">9</option><option value="10">10</option></select></label>
+                    <label><span>Pewność siebie</span><select id="predConf"><option value="0">0</option><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option><option value="6">6</option><option value="7">7</option><option value="8">8</option><option value="9">9 – niemożliwie przesadzona</option></select></label>
+                  </div>
+                  <div id="predResult"></div>
+                  <details class="weights">
+                    <summary>Oceny rywala (z raportu jego meczu)</summary>
+                    <p class="hint small">Przepisz „Oceny szczegółowe” z jego ostatniego meczu. Jeśli grał wtedy u siebie, zaznacz, a pomoc zostanie przeliczona.</p>
+                    <label class="row check"><input type="checkbox" id="oppWasHome" /> <span>Rywal grał ten mecz u siebie</span></label>
+                    <label class="row"><span>Prawa obrona</span><input type="number" id="opp_defRight" min="0" max="20" step="0.25" inputmode="decimal" /></label><label class="row"><span>Środek obrony</span><input type="number" id="opp_defCentral" min="0" max="20" step="0.25" inputmode="decimal" /></label><label class="row"><span>Lewa obrona</span><input type="number" id="opp_defLeft" min="0" max="20" step="0.25" inputmode="decimal" /></label><label class="row"><span>Pomoc</span><input type="number" id="opp_midfield" min="0" max="20" step="0.25" inputmode="decimal" /></label><label class="row"><span>Prawy atak</span><input type="number" id="opp_attRight" min="0" max="20" step="0.25" inputmode="decimal" /></label><label class="row"><span>Środkowy atak</span><input type="number" id="opp_attCentral" min="0" max="20" step="0.25" inputmode="decimal" /></label><label class="row"><span>Lewy atak</span><input type="number" id="opp_attLeft" min="0" max="20" step="0.25" inputmode="decimal" /></label>
+                  </details>
+                </section>
+                <div id="sectors" class="sectors" hidden></div>
                 <p id="spCaptain" class="hint small"></p>
                 <details class="weights">
                   <summary>Analiza głębi kadry</summary>
@@ -241,7 +261,7 @@
                   <summary>Zmęczenie i sugerowane zmiany</summary>
                   <div id="fatigue"></div>
                 </details>
-                <details class="weights">
+                <details class="weights legacy-opp" hidden>
                   <summary>Przeciwnik i kontr-ustawienie (opcjonalnie)</summary>
                   <p class="hint small">Wpisz szacowane oceny sektorów rywala (skala ~1–10+). Podpowiemy nastawienie i gdzie masz przewagę/lukę.</p>
                   <label class="row"><span>Obrona rywala</span><input type="number" id="oppDef" min="0" step="0.5" /></label>

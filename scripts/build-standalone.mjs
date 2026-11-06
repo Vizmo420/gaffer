@@ -28,6 +28,8 @@ const bundle = [
   strip(read('optimizer.js')),
   '// ===== training-calc.js =====',
   strip(read('training-calc.js')),
+  '// ===== ht-ratings.js =====',
+  strip(read('ht-ratings.js')),
   '// ===== csv-import.js =====',
   strip(read('csv-import.js')),
   '// ===== app.js =====',

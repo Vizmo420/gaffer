@@ -709,3 +709,31 @@ body.dropping .content { outline: 3px dashed var(--accent); outline-offset: -8px
   .toast { bottom: calc(78px + env(safe-area-inset-bottom)); }
   .ai-out { font-size: 16px; }
 }
+
+/* ============ PROGNOZA MECZU ============ */
+.predict { margin: 18px 0 8px; padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); }
+.predict-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+.predict-head h3 { font-size: 15px; }
+.predict-head .hint { margin: 0; }
+.predict-controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px 12px; margin-bottom: 14px; }
+.predict-controls label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+.predict-controls select { width: 100%; max-width: none; }
+.wdl { display: flex; height: 30px; border-radius: 7px; overflow: hidden; font: 600 12px/30px var(--font-mono); color: #fff; }
+.wdl span { min-width: 0; text-align: center; transition: flex 0.25s ease; }
+.wdl .w { background: var(--good); }
+.wdl .d { background: var(--faint); }
+.wdl .l { background: var(--bad); }
+.wdl-legend { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); margin: 6px 0 10px; }
+.pred-line { margin: 4px 0; font-size: 13px; }
+.pred-line .num, .pred-table .num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.pred-table { margin-top: 10px; }
+.pred-table td.lvl { color: var(--muted); }
+.pred-table tr.up td:first-child { color: var(--good); font-weight: 600; }
+.pred-table tr.down td:first-child { color: var(--bad); font-weight: 600; }
+.predict details { margin-top: 12px; }
+@media (max-width: 900px) {
+  .predict { padding: 12px; }
+  .pred-table td.lvl, .pred-table th:nth-child(3) { display: none; }
+  .predict-controls { grid-template-columns: 1fr 1fr; }
+  .predict-controls select { max-width: none; }
+}

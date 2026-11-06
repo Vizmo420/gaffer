@@ -50,6 +50,7 @@ import {
   trainingRoi,
 } from './training-calc.js';
 import { importText, diffImports } from './csv-import.js';
+import { predictRatings, simulateMatch, hatStats, ratingLabel, relocateMidfield, SECTORS as HT_SECTORS, TACTICS } from './ht-ratings.js';
 
 // ------------------------- stan -------------------------
 
@@ -231,6 +232,7 @@ function applyClub(club) {
     set('#oppMid', r.pomoc);
     set('#oppAtt', avg(r.prawyAtak, r.srodkowyAtak, r.lewyAtak));
   }  renderTraining();
+  initPrediction();
   optimize();
 }
 
@@ -1663,6 +1665,7 @@ function renderHistory() {
 // ------------------------- sektory + kontra -------------------------
 
 function renderSectors(lineup) {
+  queueMicrotask(renderPrediction);
   const box = $('#sectors');
   if (!lineup) {
     box.innerHTML = '';
@@ -1762,6 +1765,116 @@ function optimize() {
   renderCloseCalls(pool, result, opts);
   renderDepth();
   renderReportCard();
+}
+
+// ------------------------- prognoza meczu (model HO / Schum) -------------------------
+
+const SECTOR_PL = { defRight: 'Prawa obrona', defCentral: 'Środek obrony', defLeft: 'Lewa obrona', midfield: 'Pomoc', attRight: 'Prawy atak', attCentral: 'Środkowy atak', attLeft: 'Lewy atak' };
+const PRED_KEY = 'gaffer:predict';
+let predListeners = false;
+
+function predCtx() {
+  return {
+    location: $('#predLoc').value,
+    tactic: $('#predTactic').value,
+    attitude: $('#predAttitude').value,
+    spirit: Number($('#predSpirit').value),
+    confidence: Number($('#predConf').value),
+    weather: $('#weather')?.value || 'cloud',
+  };
+}
+
+function opponentRatings() {
+  const r = {};
+  for (const k of HT_SECTORS) {
+    const v = parseFloat(String($('#opp_' + k).value).replace(',', '.'));
+    if (!Number.isFinite(v) || v <= 0) return null;
+    r[k] = v;
+  }
+  // oceny z jego meczu u siebie → zdejmij premię za dom, potem dodaj właściwą dla naszego meczu
+  const theirLoc = { home: 'away', away: 'home', derby: 'derby' }[$('#predLoc').value];
+  return relocateMidfield(r, $('#oppWasHome').checked ? 'home' : 'away', theirLoc);
+}
+
+function savePredInputs() {
+  const o = { loc: $('#predLoc').value, tactic: $('#predTactic').value, att: $('#predAttitude').value, spirit: $('#predSpirit').value, conf: $('#predConf').value, wasHome: $('#oppWasHome').checked };
+  for (const k of HT_SECTORS) o[k] = $('#opp_' + k).value;
+  try { localStorage.setItem(PRED_KEY, JSON.stringify(o)); } catch {}
+}
+
+function initPrediction() {
+  let o = {};
+  try { o = JSON.parse(localStorage.getItem(PRED_KEY)) || {}; } catch {}
+  const nm = state.club?.nextMatch;
+  const or = nm?.opponent?.ratings;
+  const fromClub = or && { defRight: or.prawaObrona, defCentral: or.srodekObrony, defLeft: or.lewaObrona, midfield: or.pomoc, attRight: or.prawyAtak, attCentral: or.srodkowyAtak, attLeft: or.lewyAtak };
+  const SPIRIT_HT = { spokojni: 5 };
+  const CONF_HT = { 'niemożliwie przesadzona': 9 };
+  $('#predLoc').value = o.loc ?? (nm ? (nm.home ? 'home' : 'away') : 'home');
+  $('#predTactic').value = o.tactic ?? 'normal';
+  $('#predAttitude').value = o.att ?? 'normal';
+  $('#predSpirit').value = o.spirit ?? String(SPIRIT_HT[state.club?.team?.spirit] ?? 5);
+  $('#predConf').value = o.conf ?? String(CONF_HT[state.club?.team?.confidence] ?? 5);
+  // oceny w club.json pochodzą z meczu rywala u siebie (baraż Ultras_GKS)
+  $('#oppWasHome').checked = o.wasHome ?? !!fromClub;
+  for (const k of HT_SECTORS) $('#opp_' + k).value = o[k] ?? fromClub?.[k] ?? '';
+  $('#predOpp').textContent = nm?.opponent?.name ? `vs ${nm.opponent.name}${nm.competition ? ' · ' + nm.competition : ''}` : '';
+  if (predListeners) return;
+  predListeners = true;
+  document.querySelectorAll('.predict select, .predict input').forEach((el) =>
+    el.addEventListener('change', () => { savePredInputs(); renderPrediction(); }),
+  );
+}
+
+const pct = (v) => `${Math.round(v)}%`;
+
+// Podpowiedź taktyki tylko przy realnej różnicy (≥ 3 pkt proc. wygranych albo 0,2 gola różnicy bramek).
+function tacticAdvice(best, cur, curT) {
+  const gd = (x) => x.s.goalsFor - x.s.goalsAgainst;
+  if (best.t === curT || (best.s.win - cur.s.win < 3 && gd(best) - gd(cur) < 0.2))
+    return ' · inne taktyki nie dają tu wyraźnej przewagi';
+  return ` · lepsza taktyka: <b>${TACTICS[best.t].toLowerCase()}</b> (wygrana ${pct(best.s.win)} zamiast ${pct(cur.s.win)}, bilans ${gd(best).toFixed(1)} zamiast ${gd(cur).toFixed(1)})`;
+}
+
+function renderPrediction() {
+  const box = $('#predResult');
+  if (!box) return;
+  const lu = state.lineupA;
+  if (!lu?.result?.slots) { box.innerHTML = ''; return; }
+  const lineup = lu.result.slots.map((s) => ({ slot: s.slot, player: s.player }));
+  const ctx = predCtx();
+  const ours = predictRatings(lineup, ctx);
+  const opp = opponentRatings();
+  const ORDER = ['midfield', 'defRight', 'defCentral', 'defLeft', 'attRight', 'attCentral', 'attLeft']; // jak w raporcie HT
+  const rows = ORDER.map((k) => {
+    const them = opp ? opp[{ defLeft: 'attRight', defRight: 'attLeft', defCentral: 'attCentral', attLeft: 'defRight', attRight: 'defLeft', attCentral: 'defCentral', midfield: 'midfield' }[k]] : null;
+    const edge = them == null ? '' : ours[k] - them >= 0.75 ? 'up' : them - ours[k] >= 0.75 ? 'down' : '';
+    return `<tr class="${edge}"><td class="name">${SECTOR_PL[k]}</td><td class="num" title="${ratingLabel(ours[k])}">${ours[k].toFixed(2)}</td><td class="name lvl">${ratingLabel(ours[k])}</td>` +
+      (opp ? `<td class="num">${them.toFixed(2)}</td>` : '') + '</tr>';
+  }).join('');
+  let html = '';
+  if (opp) {
+    const sim = simulateMatch(ours, opp, { tactic: ctx.tactic });
+    // porównanie taktyk przy tym samym składzie
+    const alt = Object.keys(TACTICS).map((t) => {
+      const r = predictRatings(lineup, { ...ctx, tactic: t });
+      const s = simulateMatch(r, opp, { tactic: t });
+      return { t, s, pts: (3 * s.win + s.draw) / 100 };
+    }).sort((a, b) => b.pts - a.pts);
+    const best = alt[0];
+    html += `<div class="wdl" role="img" aria-label="Wygrana ${pct(sim.win)}, remis ${pct(sim.draw)}, porażka ${pct(sim.loss)}">
+        <span class="w" style="flex:${sim.win}">${sim.win >= 8 ? pct(sim.win) : ''}</span>
+        <span class="d" style="flex:${sim.draw}">${sim.draw >= 8 ? pct(sim.draw) : ''}</span>
+        <span class="l" style="flex:${sim.loss}">${sim.loss >= 8 ? pct(sim.loss) : ''}</span></div>
+      <div class="wdl-legend"><span>Wygrana ${pct(sim.win)}</span><span>Remis ${pct(sim.draw)}</span><span>Porażka ${pct(sim.loss)}</span></div>
+      <p class="pred-line">Średnio <b class="num">${sim.goalsFor.toFixed(1)} : ${sim.goalsAgainst.toFixed(1)}</b> · najczęściej ${sim.topScores.slice(0, 3).map((x) => `<span class="num">${x.score}</span> (${pct(x.pct)})`).join(', ')} · akcje ${pct(sim.chancesShare)} dla Was</p>
+      <p class="pred-line">HatStats: <b class="num">${Math.round(hatStats(ours))}</b> vs <b class="num">${Math.round(hatStats(opp))}</b>${tacticAdvice(best, alt.find((x) => x.t === ctx.tactic), ctx.tactic)}</p>`;
+  } else {
+    html += '<p class="hint small">Wpisz oceny rywala niżej, a pokażę szanse wygranej i najlepszą taktykę.</p>';
+  }
+  html += `<div class="tablewrap"><table class="pred-table"><thead><tr><th class="name">Sektor</th><th>Wy</th><th class="name">Poziom</th>${opp ? '<th>Rywal</th>' : ''}</tr></thead><tbody>${rows}</tbody></table></div>
+    <p class="hint small">Model ocen Schuma z Hattrick Organizer (LGPL), skuteczność skalibrowana przez Gaffera. Umiejętności bez podpoziomów, wszyscy grają normalnie. To szacunek, nie wynik silnika HT.</p>`;
+  box.innerHTML = html;
 }
 
 function seniorCtx(opts) {
@@ -2769,6 +2882,7 @@ function renderAll() {
 }
 
 initOptimizerControls();
+initPrediction();
 $('#teamInfo').textContent = `${state.squad.teamName} — ${state.squad.players.length} zawodników (przykład)`;
 if (state.youthStarId == null) state.youthStarId = detectYouthStar(state.youth.players);
 loadFromServer().then((ok) => {

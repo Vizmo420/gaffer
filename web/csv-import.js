@@ -98,8 +98,8 @@ export function importText(text) {
 
 // Różnica dwóch importów w formacie zgodnym z data/changes.json (cli.js changes).
 const DIFF_SKILLS = [
-  ['keeper', 'BR'], ['defending', 'OB'], ['playmaking', 'RO'], ['winger', 'SK'],
-  ['passing', 'PO'], ['scoring', 'SKU'], ['setPieces', 'SF'],
+  ['keeper', 'bramkarstwo'], ['defending', 'obrona'], ['playmaking', 'rozgrywanie'], ['winger', 'dośrodkowania'],
+  ['passing', 'podania'], ['scoring', 'skuteczność'], ['setPieces', 'stałe fragmenty'],
 ];
 export function diffImports(prev, curr) {
   if (!prev?.players?.length || !curr?.players?.length) return { enough: false };

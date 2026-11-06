@@ -2415,6 +2415,7 @@ function buildAiContext() {
 
 // Minimalny Markdown -> HTML (nagłówki, listy, pogrubienie); najpierw escapowanie.
 function aiMarkdown(md) {
+  md = md.replace(/\$\\(?:rightarrow|to)\$/g, '→').replace(/\$\\leftarrow\$/g, '←');
   const esc = md.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]);
   const html = [];
   let list = false;

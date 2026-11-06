@@ -62,7 +62,7 @@ test('różnica importów', () => {
   b.players.push({ ...a.players[0], id: 999, firstName: 'Nowy', lastName: 'Gość' });
   const d = diffImports({ ...a, importedAt: 'x' }, { ...b, importedAt: 'y' });
   assert.equal(d.enough, true);
-  assert.deepEqual(d.changed[0].deltas, [{ skill: 'RO', from: 7, to: 8, diff: 1 }]);
+  assert.deepEqual(d.changed[0].deltas, [{ skill: 'rozgrywanie', from: 7, to: 8, diff: 1 }]);
   assert.equal(d.removed[0].name, 'Adam Nowak, jr');
   assert.equal(d.added[0].name, 'Nowy Gość');
   assert.equal(diffImports(null, b).enough, false);

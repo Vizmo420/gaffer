@@ -82,8 +82,13 @@ Ważne zasady interpretacji:
   środkowy pomocnik, napastnik). Umiejętności nazywaj pełnymi słowami, nie skrótami.
 - Wychowankowie i lojalność 20 dają bonus do gry; uwzględnij to przed radą „sprzedaj”.
 - Trening działa tylko na zawodników, którzy grają w meczach na trenowanych pozycjach.
+Masz też swoje wcześniejsze analizy. Traktuj je jako własne notatki: nawiązuj do nich krótko
+(„jak radziłem 5.11…”), porównaj z aktualnymi danymi, co się zmieniło (forma, umiejętności, kartki,
+rywal), i powiedz wprost, jeśli wcześniejsza rada była błędna albo już nieaktualna. Nie powtarzaj ich w całości.
 Gdy menedżer zadał konkretne pytanie, odpowiedz TYLKO na nie (do ~250 słów, z konkretnymi nazwiskami),
 bez pełnego planu. Pełną strukturę 1–5 stosuj, gdy pytania nie ma.
+Liczby i zmiany umiejętności przepisuj dokładnie z danych (nazwa umiejętności przy właściwym zawodniku);
+nie używaj LaTeX-a, strzałki pisz jako →.
 Bądź zwięzły: łącznie do ~450 słów.`;
 
 function readBody(req, limit = 300_000) {
@@ -130,6 +135,20 @@ function handleAiHistory(req, res) {
   return json(405, { error: 'tylko GET / DELETE' });
 }
 
+// Ostatnie analizy jako pamięć doradcy: nawiązuje do nich zamiast zaczynać od zera.
+const AI_MEMORY_COUNT = 4;
+const AI_MEMORY_CHARS = 1800;
+function previousAdvice() {
+  const past = readAiHistory().slice(0, AI_MEMORY_COUNT);
+  if (!past.length) return '';
+  const when = (iso) => new Date(iso).toLocaleString('pl-PL', { dateStyle: 'short', timeStyle: 'short' });
+  const items = past.map((e) => {
+    const t = e.text.length > AI_MEMORY_CHARS ? e.text.slice(0, AI_MEMORY_CHARS) + ' […]' : e.text;
+    return `### ${when(e.at)} — ${e.question ? `pytanie: „${e.question}”` : 'pełny plan'}\n${t}`;
+  });
+  return `\n\n## Twoje wcześniejsze analizy (od najnowszej, skrócone)\n\n${items.join('\n\n')}`;
+}
+
 async function handleAi(req, res) {
   const json = (code, obj) => send(res, code, JSON.stringify(obj), MIME['.json']);
   if (req.method === 'GET') return json(200, { enabled: !!(AI.url && AI.key), model: AI.model });
@@ -138,13 +157,15 @@ async function handleAi(req, res) {
   try {
     const { context, question } = JSON.parse(await readBody(req));
     if (!context || typeof context !== 'string') return json(400, { error: 'brak danych drużyny' });
-    const user = `${question ? `Pytanie menedżera: ${String(question).slice(0, 2000)}\n\n` : ''}Dane drużyny:\n\n${context}`;
+    const user =
+      `${question ? `Pytanie menedżera: ${String(question).slice(0, 2000)}\n\n` : ''}Dane drużyny (aktualne):\n\n${context}` +
+      previousAdvice();
     const r = await fetch(`${AI.url}/chat/completions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AI.key}` },
       body: JSON.stringify({
         model: AI.model,
-        temperature: 0.3,
+        temperature: 0.2,
         messages: [
           { role: 'system', content: AI_SYSTEM },
           { role: 'user', content: user },

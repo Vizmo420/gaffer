@@ -2390,12 +2390,12 @@ function buildAiContext() {
   const sk = (p) => [p.keeper, p.defending, p.playmaking, p.winger, p.passing, p.scoring, p.setPieces].join('/');
   // bez względnych sektorów Gaffera — model mylił je z ocenami meczowymi HT rywala
   const report = buildReport().split('\n').filter((l) => !/^Sektory \(względne\)/.test(l)).join('\n');
-  const lines = [report, '', '## Kadra seniorów', 'Umiejętności w kolejności: bramkarstwo (HT „Bronienie”)/obrona (HT „Defensywa”)/rozgrywanie/dośrodkowania/podania/skuteczność/stałe fragmenty (skala HT 0–20). Ostatnia ocena: gwiazdki HT i pozycja (GK=bramkarz, CD=środkowy obrońca, WB=boczny obrońca, IM=środkowy pomocnik, WI=skrzydłowy, FW=napastnik).', 'zawodnik | wiek | umiejętności | forma | kondycja | doświadczenie | TSI | pensja | specjalność | ostatnia ocena'];
+  const lines = [report, '', '## Kadra seniorów', 'Umiejętności w kolejności: bramkarstwo (HT „Bronienie”)/obrona (HT „Defensywa”)/rozgrywanie/dośrodkowania/podania/skuteczność/stałe fragmenty (skala HT 0–20). Ostatnia ocena: gwiazdki HT i pozycja (GK=bramkarz, CD=środkowy obrońca, WB=boczny obrońca, IM=środkowy pomocnik, WI=skrzydłowy, FW=napastnik).', 'zawodnik | wiek | umiejętności | forma | kondycja | doświadczenie | TSI | pensja | szac. wartość Gaffera (zgrubna, TSI×wiek, NIE cena rynkowa) | specjalność | wychowanek/lojalność | ostatnia ocena'];
   for (const p of state.squad.players) {
     const last = (p.recentRatings || []).at(-1);
     lines.push(
-      [fullName(p), p.ageYears ?? p.age, sk(p), p.form, p.stamina, p.experience, p.tsi, p.salary,
-        (p.specialty ? SPECIALTY[p.specialty] : null) || '-', last ? `${last.stars}★ ${last.slot ?? ''}` : '-'].join(' | ') +
+      [fullName(p), p.ageYears ?? p.age, sk(p), p.form, p.stamina, p.experience, p.tsi, p.salary, estValue(p) ?? '-',
+        (p.specialty ? SPECIALTY[p.specialty] : null) || '-', `${p.motherClubBonus ? 'wychowanek, ' : ''}lojalność ${p.loyalty ?? '-'}`, last ? `${last.stars}★ ${last.slot ?? ''}` : '-'].join(' | ') +
         (isSuspended(p) ? ' | ZAWIESZONY' : '') + (p.injuryLevel > 0 ? ` | kontuzja ${p.injuryLevel} tyg.` : ''),
     );
   }

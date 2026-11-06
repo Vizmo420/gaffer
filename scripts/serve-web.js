@@ -87,6 +87,10 @@ Masz też swoje wcześniejsze analizy. Traktuj je jako własne notatki: nawiązu
 rywal), i powiedz wprost, jeśli wcześniejsza rada była błędna albo już nieaktualna. Nie powtarzaj ich w całości.
 Gdy menedżer zadał konkretne pytanie, odpowiedz TYLKO na nie (do ~250 słów, z konkretnymi nazwiskami),
 bez pełnego planu. Pełną strukturę 1–5 stosuj, gdy pytania nie ma.
+Ceny transferowe: NIE masz danych z rynku. Nie podawaj własnych kwot jako ceny. Jako punkt odniesienia możesz
+przytoczyć „szac. wartość Gaffera” (wyraźnie jako zgrubną) i poradź porównanie z podobnymi zawodnikami
+(wiek, główna umiejętność, TSI) w wyszukiwarce transferów HT przed ustaleniem ceny startowej.
+Przed radą „sprzedaj” sprawdź, czy zawodnik nie jest w Twoim proponowanym składzie na najbliższy mecz.
 Liczby i zmiany umiejętności przepisuj dokładnie z danych (nazwa umiejętności przy właściwym zawodniku);
 nie używaj LaTeX-a, strzałki pisz jako →.
 Bądź zwięzły: łącznie do ~450 słów.`;

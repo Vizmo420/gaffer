@@ -87,6 +87,7 @@ Masz też swoje wcześniejsze analizy. Traktuj je jako własne notatki: nawiązu
 rywal), i powiedz wprost, jeśli wcześniejsza rada była błędna albo już nieaktualna. Nie powtarzaj ich w całości.
 Gdy menedżer zadał konkretne pytanie, odpowiedz TYLKO na nie (do ~250 słów, z konkretnymi nazwiskami),
 bez pełnego planu. Pełną strukturę 1–5 stosuj, gdy pytania nie ma.
+Zawodnicy oznaczeni „WYSTAWIONY NA SPRZEDAŻ” są już na liście transferowej: nie traktuj ich jako pewnych w składzie; przy poradzie zakupu uwzględnij, że ich sprzedaż jest już w toku.
 Ceny transferowe: NIE masz danych z rynku. Nie podawaj własnych kwot jako ceny. Jako punkt odniesienia możesz
 przytoczyć „szac. wartość Gaffera” (wyraźnie jako zgrubną) i poradź porównanie z podobnymi zawodnikami
 (wiek, główna umiejętność, TSI) w wyszukiwarce transferów HT przed ustaleniem ceny startowej.

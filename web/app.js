@@ -609,6 +609,7 @@ const SQUAD_COLS = [
   { key: 'daysAtClub', label: 'Dni', editText: 'daysAtClub' },
   { key: 'weeksSinceLastMatch', label: 'BezMeczu', get: (p) => p.weeksSinceLastMatch ?? '—' },
   { key: 'yellowCards', label: 'Ż', get: (p) => `${p.yellowCards ?? 0}${isSuspended(p) ? ' ⚠' : ''}` },
+  { key: 'transferListed', label: 'Na sprzedaż', get: (p) => (p.transferListed ? 'TAK' : '') },
 ];
 
 function sortedPlayers() {
@@ -2509,7 +2510,7 @@ function buildAiContext() {
     lines.push(
       [fullName(p), p.ageYears ?? p.age, sk(p), p.form, p.stamina, p.experience, p.tsi, p.salary, estValue(p) ?? '-',
         (p.specialty ? SPECIALTY[p.specialty] : null) || '-', `${p.motherClubBonus ? 'wychowanek, ' : ''}lojalność ${p.loyalty ?? '-'}`, last ? `${last.stars}★ ${last.slot ?? ''}` : '-'].join(' | ') +
-        (isSuspended(p) ? ' | ZAWIESZONY' : '') + (p.injuryLevel > 0 ? ` | kontuzja ${p.injuryLevel} tyg.` : ''),
+        (isSuspended(p) ? ' | ZAWIESZONY' : '') + (p.transferListed ? ' | WYSTAWIONY NA SPRZEDAŻ' : '') + (p.injuryLevel > 0 ? ` | kontuzja ${p.injuryLevel} tyg.` : ''),
     );
   }
   if (state.youth?.players?.length) {

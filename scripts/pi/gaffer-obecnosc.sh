@@ -53,7 +53,12 @@ case "${1:-check}" in
     exit 0 ;;
 esac
 
-[ -z "$PHONE_MAC" ] && { echo "gaffer-obecnosc: ustaw PHONE_MAC w $CONF" >&2; exit 0; }
+# Bez PHONE_MAC automat nie działa: aplikacja ma wtedy po prostu chodzić.
+if [ -z "$PHONE_MAC" ]; then
+  systemctl --user is-active -q $SERVICE || systemctl --user start $SERVICE
+  echo "gaffer-obecnosc: brak PHONE_MAC w $CONF — aplikacja działa bez automatu" >&2
+  exit 0
+fi
 
 if present; then
   echo 0 > "$STATE"

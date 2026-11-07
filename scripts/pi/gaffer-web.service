@@ -7,3 +7,6 @@ EnvironmentFile=-%h/.config/gaffer/ai.env
 ExecStart=/usr/bin/env node scripts/serve-web.js
 Restart=on-failure
 MemoryMax=200M
+
+[Install]
+WantedBy=default.target

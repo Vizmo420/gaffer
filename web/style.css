@@ -706,6 +706,15 @@ body.dropping .content { outline: 3px dashed var(--accent); outline-offset: -8px
   .slot .pscore { font-size: 12px; }
   .pitch::after { width: 84px; height: 84px; }
 
+  /* tabele w rozwijanych sekcjach Optymalizatora: bez rozpychania strony */
+  .tab, .pitchcol, .opt-grid > * { min-width: 0; max-width: 100%; }
+  details.weights { padding-left: 10px; padding-right: 10px; max-width: 100%; }
+  #depthBox, #sectorContrib, #fatigue, #closeCalls, #trainingReport, #predResult, #counterAdvice { max-width: 100%; overflow-x: auto; }
+  #depthBox th, #depthBox td, #sectorContrib th, #sectorContrib td, #fatigue th, #fatigue td,
+  #closeCalls th, #closeCalls td { white-space: normal; padding: 7px 6px; font-size: 12px; text-align: left; }
+  #sectorContrib td:nth-child(n+3), #sectorContrib th:nth-child(n+3) { text-align: right; white-space: nowrap; }
+  #depthBox table, #sectorContrib table, #fatigue table, #closeCalls table { width: 100%; table-layout: auto; }
+
   .toast { bottom: calc(78px + env(safe-area-inset-bottom)); }
   .ai-out { font-size: 16px; }
 }

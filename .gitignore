@@ -10,3 +10,4 @@ hattrick-standalone.html
 .impeccable/
 
 data/*.csv
+.ocr-venv/

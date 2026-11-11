@@ -6,7 +6,7 @@ WorkingDirectory=%h/Desktop/Forma2/Strona/Hattrick
 EnvironmentFile=-%h/.config/gaffer/ai.env
 ExecStart=/usr/bin/env node scripts/serve-web.js
 Restart=on-failure
-MemoryMax=200M
+MemoryMax=1200M
 
 [Install]
 WantedBy=default.target

@@ -5,6 +5,8 @@
 //   npm run web   ->   http://localhost:5173
 
 import fs from 'node:fs';
+import os from 'node:os';
+import { execFile } from 'node:child_process';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -34,6 +36,7 @@ const server = http.createServer((req, res) => {
 
   if (url === '/api/ai') return handleAi(req, res);
   if (url === '/api/ai/history') return handleAiHistory(req, res);
+  if (url === '/api/ocr') return handleOcr(req, res);
 
   // /data/* -> katalog data/ (tylko pliki .json, tylko odczyt)
   if (url.startsWith('/data/')) {
@@ -110,6 +113,52 @@ function readBody(req, limit = 300_000) {
     req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
     req.on('error', reject);
   });
+}
+
+// ------------------------- OCR zrzutów (lokalnie, RapidOCR w .ocr-venv) -------------------------
+// Jeden obraz naraz (kolejka), żeby nie zjeść pamięci Pi. Zwraca linie tekstu z pozycjami;
+// parsowanie robi przeglądarka (web/screen-parse.js).
+const OCR_PY = path.join(ROOT, '.ocr-venv', 'bin', 'python');
+let ocrQueue = Promise.resolve();
+
+function readBinary(req, limit = 14_000_000) {
+  return new Promise((resolve, reject) => {
+    let size = 0;
+    const chunks = [];
+    req.on('data', (c) => {
+      size += c.length;
+      if (size > limit) { reject(new Error('obraz za duży (max 14 MB)')); req.destroy(); } else chunks.push(c);
+    });
+    req.on('end', () => resolve(Buffer.concat(chunks)));
+    req.on('error', reject);
+  });
+}
+
+function runOcr(file) {
+  return new Promise((resolve, reject) => {
+    execFile(OCR_PY, [path.join(ROOT, 'scripts', 'ocr.py'), file], { timeout: 150_000, maxBuffer: 20_000_000 }, (err, out, errOut) => {
+      if (err) return reject(new Error('OCR nie powiódł się: ' + (errOut || err.message).slice(0, 300)));
+      try { resolve(JSON.parse(out)); } catch { reject(new Error('OCR zwrócił nieczytelną odpowiedź')); }
+    });
+  });
+}
+
+async function handleOcr(req, res) {
+  const json = (code, obj) => send(res, code, JSON.stringify(obj), MIME['.json']);
+  if (req.method === 'GET') return json(200, { enabled: fs.existsSync(OCR_PY) });
+  if (req.method !== 'POST') return json(405, { error: 'tylko POST' });
+  if (!fs.existsSync(OCR_PY)) return json(503, { error: 'OCR nie jest zainstalowany na tym serwerze (.ocr-venv).' });
+  try {
+    const buf = await readBinary(req);
+    if (buf.length < 1000) return json(400, { error: 'pusty plik' });
+    const file = path.join(os.tmpdir(), `gaffer-ocr-${Date.now()}-${Math.random().toString(36).slice(2)}.img`);
+    fs.writeFileSync(file, buf);
+    const job = ocrQueue.then(() => runOcr(file)).finally(() => fs.rm(file, { force: true }, () => {}));
+    ocrQueue = job.catch(() => {});
+    return json(200, await job);
+  } catch (err) {
+    return json(502, { error: err.message });
+  }
 }
 
 // Historia analiz: data/ai-history.json (lokalnie na Pi, wspólna dla wszystkich urządzeń).

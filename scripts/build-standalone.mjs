@@ -30,6 +30,8 @@ const bundle = [
   strip(read('training-calc.js')),
   '// ===== ht-ratings.js =====',
   strip(read('ht-ratings.js')),
+  '// ===== screen-parse.js =====',
+  strip(read('screen-parse.js')),
   '// ===== planner.js =====',
   strip(read('planner.js')),
   '// ===== csv-import.js =====',

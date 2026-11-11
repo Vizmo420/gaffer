@@ -51,6 +51,7 @@ import {
 } from './training-calc.js';
 import { importText, diffImports } from './csv-import.js';
 import { forecastCash, safeSpend, scoreCandidate } from './planner.js';
+import { parseScreen, mergeCards, missingFields } from './screen-parse.js';
 import { predictRatings, simulateMatch, hatStats, ratingLabel, relocateMidfield, SECTORS as HT_SECTORS, TACTICS } from './ht-ratings.js';
 
 // ------------------------- stan -------------------------
@@ -419,8 +420,42 @@ function importFromText(text) {
 }
 
 async function importFiles(files) {
-  for (const f of files) importFromText(await f.text());
+  const images = files.filter((f) => /^image\//.test(f.type) || /\.(png|jpe?g|webp|heic)$/i.test(f.name));
+  for (const f of files) if (!images.includes(f)) importFromText(await f.text());
+  if (images.length) await importScreens(images);
 }
+
+// Zrzuty ekranu kart zawodników: OCR na Pi (/api/ocr) + parser w przeglądarce.
+async function importScreens(images) {
+  const cards = [];
+  let tables = 0;
+  for (let i = 0; i < images.length; i++) {
+    toast(`Czytam zrzut ${i + 1} z ${images.length}… (około 10 s każdy)`);
+    try {
+      const r = await fetch('api/ocr', { method: 'POST', body: images[i] });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok || body.error) throw new Error(body.error || `HTTP ${r.status}`);
+      const parsed = parseScreen(body.lines);
+      if (parsed.kind === 'table') tables++;
+      cards.push(...parsed.cards);
+    } catch (err) {
+      toast('Nie udało się odczytać zrzutu: ' + err.message, true);
+      return;
+    }
+  }
+  const merged = mergeCards(cards);
+  if (!merged.length) {
+    toast(tables
+      ? 'To wygląda na tabelę kadry. Jej odczyt ze zrzutu jest zawodny (małe liczby się sklejają). Wklej tekst lub CSV, albo wyślij zrzuty kart zawodników.'
+      : 'Nie rozpoznałem żadnej karty zawodnika. Zrzut musi pokazywać umiejętności (Forma, Kondycja, Bronienie…).', true);
+    return;
+  }
+  addOcrCandidates(merged);
+  showTab('plan');
+  const miss = merged.map((c) => { const m = missingFields(c); return m.length ? `${c.name}: brak ${m.map((k) => MISS_PL[k] || k).join(', ')}` : null; }).filter(Boolean);
+  toast(`Odczytano ${merged.length}: ${merged.map((c) => c.name).join(', ')}.` + (miss.length ? ' ' + miss.join('; ') + '.' : ''), miss.length > 0);
+}
+const MISS_PL = { salary: 'pensji', age: 'wieku', form: 'formy', stamina: 'kondycji', keeper: 'bronienia', defending: 'defensywy', playmaking: 'rozgrywania', winger: 'dośrodkowań', passing: 'podań', scoring: 'skuteczności', setPieces: 'stałych fragmentów' };
 
 $('#fileImport').addEventListener('change', async (e) => {
   await importFiles([...e.target.files]);
@@ -548,8 +583,8 @@ function renderCandidates() {
   const rows = candidates.map((c, i) => ({ c, i, r: scoreCandidate(state.squad.players, c, { price: c.price || 0, ctx }) })).filter((x) => x.r)
     .sort((a, b) => b.r.dSigma - a.r.dSigma);
   box.innerHTML = '<div class="tablewrap"><table class="cand-table"><thead><tr><th class="name">Kandydat</th><th>+Σ</th><th>Cena</th><th>Pensja</th><th>Rok</th><th></th></tr></thead><tbody>' +
-    rows.map(({ c, i, r }) => `<tr class="${r.inXI ? 'in' : 'out'}"><td class="name">${escHtml(c.name || '—')}<small>${c.age} l. · ${r.inXI ? 'gra: ' + (POS_SHORT[r.slot] ?? r.slot) : 'nie wchodzi do XI'}</small></td>` +
-      `<td class="num">${r.dSigma >= 0 ? '+' : ''}${r.dSigma.toFixed(2)}</td><td class="num">${zl(c.price || 0)}</td><td class="num">${zl(r.salary)}</td>` +
+    rows.map(({ c, i, r }) => `<tr class="${r.inXI ? 'in' : 'out'}"><td class="name">${escHtml(c.name || '—')}<small>${c.age} l. · ${r.inXI ? 'gra: ' + (POS_SHORT[r.slot] ?? r.slot) : 'nie wchodzi do XI'}${c.deadline ? ' · do ' + escHtml(c.deadline.slice(0, 16)) : ''}</small>${c.missing?.length ? `<small class="warn">sprawdź: ${c.missing.map((k) => MISS_PL[k] || k).join(', ')}</small>` : ''}${c.warn?.length ? '<small class="warn">cyfra z OCR sprzeczna ze słowem, przyjęto słowo</small>' : ''}</td>` +
+      `<td class="num">${r.dSigma >= 0 ? '+' : ''}${r.dSigma.toFixed(2)}</td><td class="num">${zl(c.price || 0)}</td><td class="num">${c.salary ? zl(r.salary) : '?'}</td>` +
       `<td class="num">${zl(r.yearCost)}</td><td><button class="icon-btn" data-del="${i}" aria-label="Usuń ${escHtml(c.name || '')}">×</button></td></tr>`).join('') +
     '</tbody></table></div><p class="hint small">+Σ = zysk dla najlepszego składu (3-5-2) po dodaniu zawodnika. „Rok” = cena + 52 tygodnie pensji po transferze. Szacunek, nie wycena rynkowa.</p>';
   box.querySelectorAll('[data-del]').forEach((b) => b.addEventListener('click', () => {
@@ -557,6 +592,20 @@ function renderCandidates() {
     try { localStorage.setItem(CAND_KEY, JSON.stringify(candidates)); } catch {}
     renderCandidates();
   }));
+}
+
+function addOcrCandidates(list) {
+  for (const c of list) {
+    const key = (n) => String(n || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z]/g, '');
+    const cand = { name: c.name, age: c.age ?? 25, form: c.form ?? 6, stamina: c.stamina ?? 6, keeper: c.keeper ?? 1, defending: c.defending ?? 1,
+      playmaking: c.playmaking ?? 1, winger: c.winger ?? 1, passing: c.passing ?? 1, scoring: c.scoring ?? 1, setPieces: c.setPieces ?? 1,
+      experience: c.experience ?? 4, leadership: c.leadership ?? 3, salary: c.salary ?? 0, price: c.price ?? 0, tsi: c.tsi ?? 0,
+      specialty: c.specialty ?? 0, deadline: c.deadline || '', warn: c.warn || [], missing: missingFields(c), id: 9e9 + candidates.length };
+    const i = candidates.findIndex((x) => key(x.name) === key(cand.name));
+    if (i >= 0) candidates[i] = cand; else candidates.push(cand);
+  }
+  try { localStorage.setItem(CAND_KEY, JSON.stringify(candidates)); } catch {}
+  renderCandidates();
 }
 
 function renderPlan() {
@@ -574,6 +623,7 @@ $('#cAdd')?.addEventListener('click', () => {
   $('#cName').value = '';
   renderCandidates();
 });
+$('#shotInput')?.addEventListener('change', async (e) => { await importFiles([...e.target.files]); e.target.value = ''; });
 $('#cClear')?.addEventListener('click', () => {
   if (!candidates.length || !confirm('Wyczyścić listę kandydatów?')) return;
   candidates = [];

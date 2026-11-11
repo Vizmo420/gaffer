@@ -50,6 +50,7 @@ import {
   trainingRoi,
 } from './training-calc.js';
 import { importText, diffImports } from './csv-import.js';
+import { forecastCash, safeSpend, scoreCandidate } from './planner.js';
 import { predictRatings, simulateMatch, hatStats, ratingLabel, relocateMidfield, SECTORS as HT_SECTORS, TACTICS } from './ht-ratings.js';
 
 // ------------------------- stan -------------------------
@@ -505,6 +506,81 @@ function toast(msg, isError = false) {
 
 // krótkie kody pozycji jak w Hattricku (telefon)
 const POS_SHORT = { GK: 'BR', CD: 'ŚO', WB: 'BO', WI: 'SK', IM: 'ŚP', FW: 'NP' };
+
+// ------------------------- Plan i rynek -------------------------
+
+const CAND_KEY = 'gaffer:candidates';
+const zl = (n) => `${Math.round(n).toLocaleString('pl-PL')} zł`;
+const val = (id) => Number(String($(id).value).replace(',', '.')) || 0;
+let candidates = [];
+try { candidates = JSON.parse(localStorage.getItem(CAND_KEY)) || []; } catch {}
+
+function planDefaults() {
+  const f = state.club?.finance;
+  if (f && !$('#fCash').value) $('#fCash').value = 2329766;
+  if (!$('#fWages').value) $('#fWages').value = state.squad.players.reduce((a, p) => a + (p.salary || 0), 0);
+}
+
+function renderFinance() {
+  const box = $('#finResult');
+  if (!box) return;
+  const o = { cash: val('#fCash'), wages: val('#fWages'), sponsors: val('#fSponsors'), staff: val('#fStaff'), homeIncome: val('#fHome'), oneOff: val('#fSpend') };
+  if (!o.cash) { box.innerHTML = '<p class="hint">Wpisz gotówkę, żeby zobaczyć prognozę.</p>'; return; }
+  const f = forecastCash(o);
+  const safe = safeSpend({ ...o, oneOff: 0 });
+  const max = Math.max(...f.rows.map((r) => r.cash), 1), min = Math.min(...f.rows.map((r) => r.cash), 0);
+  const span = Math.max(1, max - min);
+  const bars = f.rows.map((r) => `<span class="bar ${r.cash < 500000 ? 'low' : ''} ${r.home ? 'home' : ''}" style="height:${Math.max(4, ((r.cash - min) / span) * 100)}%" title="Tydz. ${r.week}${r.home ? ' (mecz u siebie)' : ''}: ${zl(r.cash)}"></span>`).join('');
+  box.innerHTML = `<div class="fin-cards">
+      <div><b class="num ${f.quietNet < 0 ? 'neg' : 'pos'}">${zl(f.quietNet)}</b><span>tydzień bez meczu u siebie</span></div>
+      <div><b class="num ${f.homeNet < 0 ? 'neg' : 'pos'}">${zl(f.homeNet)}</b><span>tydzień z meczem u siebie</span></div>
+      <div><b class="num">${zl(safe)}</b><span>bezpieczny zakup (zostaje ≥ 500 tys.)</span></div>
+    </div>
+    <div class="fin-chart" role="img" aria-label="Gotówka w kolejnych tygodniach">${bars}</div>
+    <p class="hint small">Najniżej: <b class="num">${zl(f.minCash)}</b> w tygodniu ${f.minWeek}; po 16 tygodniach <b class="num">${zl(f.endCash)}</b>. Słupki: ciemniejsze = mecz u siebie, czerwone = poniżej 500 tys. Zakładam mecz u siebie co 2 tygodnie.</p>`;
+}
+
+function renderCandidates() {
+  const box = $('#candList');
+  if (!box) return;
+  if (!candidates.length) { box.innerHTML = '<p class="hint small">Lista jest pusta.</p>'; return; }
+  const ctx = { spirit: 5, confidence: 9 };
+  const rows = candidates.map((c, i) => ({ c, i, r: scoreCandidate(state.squad.players, c, { price: c.price || 0, ctx }) })).filter((x) => x.r)
+    .sort((a, b) => b.r.dSigma - a.r.dSigma);
+  box.innerHTML = '<div class="tablewrap"><table class="cand-table"><thead><tr><th class="name">Kandydat</th><th>+Σ</th><th>Cena</th><th>Pensja</th><th>Rok</th><th></th></tr></thead><tbody>' +
+    rows.map(({ c, i, r }) => `<tr class="${r.inXI ? 'in' : 'out'}"><td class="name">${escHtml(c.name || '—')}<small>${c.age} l. · ${r.inXI ? 'gra: ' + (POS_SHORT[r.slot] ?? r.slot) : 'nie wchodzi do XI'}</small></td>` +
+      `<td class="num">${r.dSigma >= 0 ? '+' : ''}${r.dSigma.toFixed(2)}</td><td class="num">${zl(c.price || 0)}</td><td class="num">${zl(r.salary)}</td>` +
+      `<td class="num">${zl(r.yearCost)}</td><td><button class="icon-btn" data-del="${i}" aria-label="Usuń ${escHtml(c.name || '')}">×</button></td></tr>`).join('') +
+    '</tbody></table></div><p class="hint small">+Σ = zysk dla najlepszego składu (3-5-2) po dodaniu zawodnika. „Rok” = cena + 52 tygodnie pensji po transferze. Szacunek, nie wycena rynkowa.</p>';
+  box.querySelectorAll('[data-del]').forEach((b) => b.addEventListener('click', () => {
+    candidates.splice(Number(b.dataset.del), 1);
+    try { localStorage.setItem(CAND_KEY, JSON.stringify(candidates)); } catch {}
+    renderCandidates();
+  }));
+}
+
+function renderPlan() {
+  planDefaults();
+  renderFinance();
+  renderCandidates();
+}
+document.querySelectorAll('#tab-plan input[id^="f"]').forEach((el) => el.addEventListener('input', renderFinance));
+$('#cAdd')?.addEventListener('click', () => {
+  const c = { name: $('#cName').value.trim() || 'Kandydat', age: val('#cAge') || 25, form: val('#cForm'), stamina: val('#cStam'),
+    keeper: val('#cBr'), defending: val('#cDe'), playmaking: val('#cRo'), winger: val('#cDs'), passing: val('#cPo'), scoring: val('#cSk'),
+    setPieces: val('#cSf'), salary: val('#cSal'), price: val('#cPrice'), id: 9e9 + candidates.length };
+  candidates.push(c);
+  try { localStorage.setItem(CAND_KEY, JSON.stringify(candidates)); } catch {}
+  $('#cName').value = '';
+  renderCandidates();
+});
+$('#cClear')?.addEventListener('click', () => {
+  if (!candidates.length || !confirm('Wyczyścić listę kandydatów?')) return;
+  candidates = [];
+  try { localStorage.removeItem(CAND_KEY); } catch {}
+  renderCandidates();
+});
+document.querySelector('.sidenav [data-tab="plan"]')?.addEventListener('click', () => setTimeout(renderPlan, 0));
 
 // ------------------------- nawigacja / powłoka -------------------------
 

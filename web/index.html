@@ -27,6 +27,7 @@
           <button data-tab="ratingmap" data-title="Mapa ocen">Mapa ocen</button>
           <p class="navgroup-label">Drużyna</p>
           <button data-tab="economy" data-title="Ekonomia">Ekonomia</button>
+          <button data-tab="plan" data-title="Plan i rynek">Plan i rynek</button>
           <button data-tab="transfers" data-title="Transfery">Transfery</button>
           <button data-tab="history" data-title="Historia i zmiany">Historia</button>
           <button data-tab="matches" data-title="Mecze">Mecze</button>
@@ -83,6 +84,36 @@
             <h2 class="section-h">Historia analiz</h2>
             <ol id="aiHistory" class="ai-history"></ol>
             <p class="hint small">Doradca pamięta 4 ostatnie analizy i nawiązuje do nich. To rada, nie wyrocznia: sprawdzaj ją z liczbami w pozostałych zakładkach. Do AI trafia tylko podsumowanie drużyny, przez Twoją bramkę na Pi.</p>
+          </section>
+
+          <section id="tab-plan" class="tab">
+            <section class="plan-block" aria-labelledby="finTitle">
+              <h2 id="finTitle" class="section-h first">Finanse: prognoza na 16 tygodni</h2>
+              <div class="plan-grid">
+                <label><span>Gotówka (zł)</span><input type="number" id="fCash" inputmode="decimal" step="1000" min="0" value="" /></label>
+                <label><span>Pensje tygodniowo (zł)</span><input type="number" id="fWages" inputmode="decimal" step="1000" min="0" value="" /></label>
+                <label><span>Sponsorzy tygodniowo</span><input type="number" id="fSponsors" inputmode="decimal" step="1000" min="0" value="368000" /></label>
+                <label><span>Sztab tygodniowo</span><input type="number" id="fStaff" inputmode="decimal" step="1000" min="0" value="301120" /></label>
+                <label><span>Wpływ z meczu u siebie</span><input type="number" id="fHome" inputmode="decimal" step="10000" min="0" value="1100000" /></label>
+                <label><span>Planowany zakup (zł)</span><input type="number" id="fSpend" inputmode="decimal" step="10000" min="0" value="0" /></label>
+              </div>
+              <div id="finResult"></div>
+            </section>
+            <section class="plan-block" aria-labelledby="candTitle">
+              <h2 id="candTitle" class="section-h">Rynek: oceń kandydata</h2>
+              <p class="hint">Wpisz dane ze strony zawodnika. Gaffer sprawdzi, czy wejdzie do składu, ile da punktów Σ i ile kosztuje na rok (pensja rośnie o 20% po transferze, lojalność spada do 2).</p>
+              <div class="plan-grid">
+                <label class="wide"><span>Nazwisko</span><input type="text" id="cName" autocomplete="off" /></label>
+                <label><span>Wiek</span><input type="number" id="cAge" inputmode="decimal" step="1" min="0" value="25" /></label>
+                <label><span>Forma</span><input type="number" id="cForm" inputmode="decimal" step="1" min="0" max="20" value="7" /></label>
+                <label><span>Kondycja</span><input type="number" id="cStam" inputmode="decimal" step="1" min="0" max="20" value="7" /></label>
+                <label><span>Bronienie</span><input type="number" id="cBr" inputmode="decimal" step="1" min="0" max="20" value="1" /></label><label><span>Defensywa</span><input type="number" id="cDe" inputmode="decimal" step="1" min="0" max="20" value="3" /></label><label><span>Rozgrywanie</span><input type="number" id="cRo" inputmode="decimal" step="1" min="0" max="20" value="3" /></label><label><span>Dośrodkowania</span><input type="number" id="cDs" inputmode="decimal" step="1" min="0" max="20" value="3" /></label><label><span>Podania</span><input type="number" id="cPo" inputmode="decimal" step="1" min="0" max="20" value="3" /></label><label><span>Skuteczność</span><input type="number" id="cSk" inputmode="decimal" step="1" min="0" max="20" value="3" /></label><label><span>St. fragmenty</span><input type="number" id="cSf" inputmode="decimal" step="1" min="0" max="20" value="3" /></label>
+                <label><span>Pensja dziś (zł/tydz.)</span><input type="number" id="cSal" inputmode="decimal" step="100" min="0" value="" /></label>
+                <label><span>Cena (zł)</span><input type="number" id="cPrice" inputmode="decimal" step="10000" min="0" value="" /></label>
+              </div>
+              <div class="row-actions"><button id="cAdd" class="primary">Oceń i dodaj do listy</button><button id="cClear" class="ghost">Wyczyść listę</button></div>
+              <div id="candList"></div>
+            </section>
           </section>
 
           <section id="tab-squad" class="tab">

@@ -1,6 +1,6 @@
 // Prosty service worker: network-first dla powłoki (świeże po zmianach kodu),
 // cache jako fallback offline. Dane (/data/*) zawsze z sieci, bez cache.
-const CACHE = 'gaffer-v3';
+const CACHE = 'gaffer-v4';
 const SHELL = [
   './',
   './index.html',
@@ -11,6 +11,7 @@ const SHELL = [
   './sample-squad.js',
   './csv-import.js',
   './ht-ratings.js',
+  './planner.js',
   './manifest.webmanifest',
 ];
 

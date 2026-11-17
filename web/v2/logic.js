@@ -32,7 +32,7 @@ export function matchState(m, now = new Date()) {
 export const byDate = (a, b) => new Date(a.date) - new Date(b.date);
 
 export function matchId(m) {
-  return m.id || `${String(m.date).slice(0, 16)}|${m.homeTeamName}|${m.awayTeamName}`;
+  return m.id != null && m.id !== '' ? String(m.id) : `${String(m.date).slice(0, 16)}|${m.homeTeamName}|${m.awayTeamName}`;
 }
 
 export function ensureMatchIds(list) {

@@ -3,7 +3,7 @@
 import { html, raw, icon, str, toast, openSheet, closeSheet, fmt1, fmt2, signed } from '../ui.js';
 import { state, save, teamName, players, savedLineup } from '../store.js';
 import { opponentOf, matchState, byDate, fmtDate, fullName, SLOT_SHORT, SLOT_NAME, alternativesFor, lineupToText, matchId, SKILLS } from '../logic.js';
-import { edit, currentMatch, currentLineup, startEdit, prediction, opts, FORMATION_NAMES } from '../compute.js';
+import { edit, currentMatch, currentLineup, startEdit, prediction, opts, FORMATION_NAMES, applyVariant, rotationFor } from '../compute.js';
 import { recommendCaptain, recommendSetPieceTaker, suggestSubs, isSuspended } from '../../optimizer.js';
 import { assignSides, ratingLabel } from '../../ht-ratings.js';
 import { openPlayer } from './kadra.js';
@@ -44,6 +44,10 @@ export async function render(el, { app }) {
   if (upcoming.length > 1) {
     parts.push(html`<div class="chips" role="tablist" aria-label="Mecz">${upcoming.slice(0, 6).map((x) => html`<button data-match="${matchId(x)}" class="${matchId(x) === edit.matchId ? 'on' : ''}">${fmtDate(x.date)} ${opponentOf(x, team).name}</button>`)}</div>`);
   }
+  parts.push(html`<div class="seg" role="tablist" aria-label="Wariant składu">
+    <button data-variant="strong" class="${edit.variant !== 'rotation' ? 'on' : ''}">Najsilniejszy</button>
+    <button data-variant="rotation" class="${edit.variant === 'rotation' ? 'on' : ''}">Trening rezerw</button>
+  </div>`);
   parts.push(html`<div class="seg" role="tablist" aria-label="Formacja">
     <button data-form="auto" class="${edit.formation === 'auto' ? 'on' : ''}">Auto</button>
     ${FORMATION_NAMES.map((f) => html`<button data-form="${f}" class="${edit.formation === f ? 'on' : ''}">${f}</button>`)}
@@ -59,6 +63,17 @@ export async function render(el, { app }) {
     if (!m) parts.push(html`<p class="hint">Dodaj mecz w <a href="#/wiecej/mecze?nowy=1">Więcej → Mecze</a>, żeby zapisać skład.</p>`);
   } else {
     parts.push(html`<div class="card"><p>Za mało zdrowych zawodników, żeby ułożyć ${edit.formation}.</p></div>`);
+  }
+
+  // --- wariant treningowy: kto gra, kto odpoczywa ---
+  if (lu && edit.variant === 'rotation') {
+    const r = rotationFor();
+    const strongPred = r && pred?.sim ? prediction(r.strong, m) : null;
+    parts.push(html`<section class="card" style="margin-top:12px"><div class="card-head"><h2>Trening rezerw</h2>${strongPred ? html`<span class="small muted">najsilniejszy: ${Math.round(strongPred.sim.win)}% wygranej</span>` : ''}</div>
+      ${r ? html`<p class="small"><b>Minuty na trenowanej pozycji (${state.settings.trainingType.toLowerCase()}):</b> ${r.getting.map(fullName).join(', ')}.</p>
+      <p class="small" style="margin-top:6px"><b>Odpoczywają:</b> ${r.rested.map(fullName).join(', ')}.</p>
+      <p class="hint">Bramka i obrona zostają najmocniejsze, żeby nie przegrać wysoko. Każdą pozycję możesz zmienić, dotykając zawodnika. Pamiętaj: odpoczywający potrenują tylko, jeśli zagrali w tym tygodniu w innym meczu.</p>` : html`<p class="small muted">Obecny trening (${state.settings.trainingType}) nie obejmuje żadnej pozycji w tej formacji.</p>`}
+    </section>`);
   }
 
   // --- prognoza ---
@@ -77,6 +92,7 @@ export async function render(el, { app }) {
         <p class="small muted">Najczęstsze wyniki: ${pred.sim.topScores.slice(0, 3).map((s) => `${s.score} (${Math.round(s.pct)}%)`).join(', ')} · posiadanie ${Math.round(pred.sim.possession)}%</p>
         <p class="small" style="margin-top:10px"><b>Taktyka</b></p>
         <div class="chips">${pred.tactics.map((t) => html`<button data-tactic="${t.t}" class="${t.t === edit.tactic ? 'on' : ''}">${t.label} ${Math.round(t.s.win)}%</button>`)}</div>
+        ${edit.variant !== 'rotation' && pred.sim.win < 15 ? html`<p class="alert warn">${icon('warn')}<span>Szanse na wygraną są bardzo małe. Możesz dać ten mecz rezerwowym, żeby zebrali minuty na trening. <button class="link" data-variant="rotation" style="border:0;background:none;padding:0;font:inherit;font-weight:700;cursor:pointer">Ułóż skład treningowy →</button></span></p>` : ''}
         ${best && cur && best.t !== cur.t && best.s.win - cur.s.win >= 3 ? html`<p class="alert info">${icon('info')}<span>${best.label} daje ${Math.round(best.s.win)}% wygranych zamiast ${Math.round(cur.s.win)}%.</span></p>` : ''}
       ` : html`<div class="card-head"><h2>HatStats ${Math.round(pred.hs)}</h2>${m ? html`<a class="link" href="#/wiecej/mecze/${encodeURIComponent(matchId(m))}">Wpisz oceny rywala →</a>` : ''}</div>
         <p class="small muted">Bez ocen rywala pokazuję tylko nasze oceny sektorów.</p>`}
@@ -113,10 +129,11 @@ export async function render(el, { app }) {
 
   // --- zdarzenia ---
   el.querySelectorAll('[data-match]').forEach((b) => (b.onclick = () => { startEdit(state.matches.find((x) => matchId(x) === b.dataset.match)); app.render(); }));
-  el.querySelectorAll('[data-form]').forEach((b) => (b.onclick = () => { edit.formation = b.dataset.form; edit.locks = {}; app.render(); }));
+  el.querySelectorAll('[data-form]').forEach((b) => (b.onclick = () => { edit.formation = b.dataset.form; if (edit.variant === 'rotation') applyVariant('rotation'); else edit.locks = {}; app.render(); }));
+  el.querySelectorAll('[data-variant]').forEach((b) => (b.onclick = () => { if (b.dataset.variant === edit.variant) return; applyVariant(b.dataset.variant); app.render(); }));
   el.querySelectorAll('[data-tactic]').forEach((b) => (b.onclick = () => { edit.tactic = b.dataset.tactic; app.render(); }));
   el.querySelectorAll('[data-slot]').forEach((b) => (b.onclick = () => openSlot(Number(b.dataset.slot), lu, app)));
-  el.querySelector('#reset')?.addEventListener('click', () => { edit.locks = {}; app.render(); });
+  el.querySelector('#reset')?.addEventListener('click', () => { edit.locks = {}; edit.variant = 'strong'; app.render(); });
   el.querySelector('#cap')?.addEventListener('change', (e) => { edit.captainId = Number(e.target.value); app.render(); });
   el.querySelector('#sp')?.addEventListener('change', (e) => { edit.setPiecesId = Number(e.target.value); app.render(); });
   el.querySelector('#loy').onchange = async (e) => { state.settings.useLoyalty = e.target.checked; await save('settings').catch(() => {}); app.render(); };
@@ -124,7 +141,7 @@ export async function render(el, { app }) {
   el.querySelector('#saveLu')?.addEventListener('click', async () => {
     // prognoza bez korekty — po meczu porównamy ją z ocenami z raportu
     const predicted = prediction(lu, m)?.raw ?? null;
-    state.lineups[matchId(m)] = { formation: lu.name, slots: lu.slots, playerIds: xiIds, captainId: edit.captainId, setPiecesId: edit.setPiecesId, tactic: edit.tactic, predicted, savedAt: new Date().toISOString() };
+    state.lineups[matchId(m)] = { formation: lu.name, slots: lu.slots, playerIds: xiIds, captainId: edit.captainId, setPiecesId: edit.setPiecesId, tactic: edit.tactic, variant: edit.variant, predicted, savedAt: new Date().toISOString() };
     if (edit.formation === 'auto') edit.formation = lu.name;
     lu.result.slots.forEach((s, i) => { if (s.player) edit.locks[i] = s.player.id; });
     try { await save('lineups'); toast('Skład zapisany', 'good'); app.render(); } catch (e) { toast(e.message, 'bad'); }

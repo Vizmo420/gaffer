@@ -457,3 +457,22 @@ export function transferSummary(transfers = []) {
 export function squadValueSeries(history = []) {
   return history.map((h) => ({ at: h.at, tsi: h.players.reduce((a, p) => a + (p.tsi || 0), 0), wages: h.players.reduce((a, p) => a + (p.salary || 0), 0), n: h.players.length }));
 }
+
+// ---------------- skład treningowy (gdy mecz i tak jest nie do wygrania) ----------------
+
+// Najsilniejsza XI zostaje tylko na pozycjach, których obecny trening nie obejmuje (np. bramka i obrona przy
+// treningu podań). Trenowane pozycje dostają najlepsi z pozostałych — oni zbiorą minuty na tygodniowy trening.
+export function rotationLineup(players, { formation = 'auto', opts = {}, trainingType } = {}) {
+  const strong = pickLineup(players, { formation, opts });
+  if (!strong) return null;
+  const trained = strong.slots.map((s, i) => (coverageFor(s, trainingType) !== 'none' ? i : -1)).filter((i) => i >= 0);
+  if (!trained.length) return null;
+  const rested = trained.map((i) => strong.result.slots[i].player).filter(Boolean);
+  const out = new Set(rested.map((p) => p.id));
+  const locks = {};
+  strong.slots.forEach((_, i) => { const p = strong.result.slots[i].player; if (!trained.includes(i) && p) locks[i] = p.id; });
+  const lu = pickLineup(players.filter((p) => !out.has(p.id)), { formation: strong.name, locks, opts });
+  if (!lu) return null;
+  const getting = trained.map((i) => lu.result.slots[i].player).filter(Boolean);
+  return { ...lu, strong, rested, getting };
+}

@@ -4,7 +4,7 @@ import {
   matchState, nextMatch, pendingResults, opponentOf, resultFor, nextTrainingUpdate, trainingUpdatesBetween,
   skillChanges, wageAfterTransfer, pickLineup, alternativesFor, sellAdvice, youthVerdicts, preMatchChecklist,
   buildAlerts, parseDeadline, coverageFor, trainingPlan, ensureMatchIds, relTime,
-  minutesPlan, calibration, applyCalibration, transferSummary, squadValueSeries, matchId,
+  minutesPlan, rotationLineup, calibration, applyCalibration, transferSummary, squadValueSeries, matchId,
 } from '../web/v2/logic.js';
 import { SAMPLE_SQUAD, SAMPLE_YOUTH } from '../web/sample-squad.js';
 
@@ -138,4 +138,17 @@ test('dziennik transferów i wartość kadry', () => {
   assert.deepEqual([s.spent, s.earned, s.balance, s.unknown], [1224000, 300000, -924000, 1]);
   const v = squadValueSeries([{ at: 'a', players: [{ tsi: 10, salary: 2 }, { tsi: 5, salary: 1 }] }]);
   assert.deepEqual(v[0], { at: 'a', tsi: 15, wages: 3, n: 2 });
+});
+
+test('skład treningowy: trenowane pozycje dostają rezerwowi, obrona i bramka zostają najmocniejsze', () => {
+  const ps = SAMPLE_SQUAD.players;
+  const r = rotationLineup(ps, { formation: '3-5-2', trainingType: 'Podania' });
+  assert.equal(r.name, '3-5-2');
+  r.slots.forEach((slot, i) => {
+    const now = r.result.slots[i].player?.id, strong = r.strong.result.slots[i].player?.id;
+    if (['GK', 'CD'].includes(slot)) assert.equal(now, strong);
+    else assert.ok(!r.rested.some((p) => p.id === now));
+  });
+  assert.equal(r.getting.length, 7);
+  assert.equal(rotationLineup(ps, { formation: '3-5-2', trainingType: 'Obrona' }).getting.length, 3);
 });

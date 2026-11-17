@@ -3,11 +3,11 @@
 import { FORMATIONS } from '../optimizer.js';
 import { predictRatings, simulateMatch, relocateMidfield, hatStats, TACTICS } from '../ht-ratings.js';
 import { forecastCash, safeSpend } from '../planner.js';
-import { pickLineup, squadOpts, nextMatch, opponentOf, matchId, fullName, SLOT_NAME, SKILLS, youthVerdicts, sellAdvice, fmtMoney, calibration, applyCalibration } from './logic.js';
+import { pickLineup, squadOpts, nextMatch, opponentOf, matchId, fullName, SLOT_NAME, SKILLS, youthVerdicts, sellAdvice, fmtMoney, calibration, applyCalibration, rotationLineup } from './logic.js';
 import { state, players, teamName, savedLineup, weeklyWages } from './store.js';
 
 // Stan edycji składu (w pamięci, do zapisu). Klucz: id meczu.
-export const edit = { matchId: null, formation: null, locks: {}, tactic: 'normal', captainId: null, setPiecesId: null };
+export const edit = { matchId: null, formation: null, locks: {}, tactic: 'normal', captainId: null, setPiecesId: null, variant: 'strong' };
 
 export const opts = () => squadOpts(state.settings);
 
@@ -29,6 +29,22 @@ export function startEdit(m) {
   edit.tactic = saved?.tactic ?? 'normal';
   edit.captainId = saved?.captainId ?? null;
   edit.setPiecesId = saved?.setPiecesId ?? null;
+  edit.variant = saved?.variant ?? 'strong';
+}
+
+// Skład treningowy dla bieżącego meczu: blokuje wszystkie 11 pozycji (dalej można zmieniać ręcznie).
+export function rotationFor() {
+  const f = edit.formation === 'auto' || !edit.formation ? state.settings.formation : edit.formation;
+  return rotationLineup(players(), { formation: f, opts: opts(), trainingType: state.settings.trainingType });
+}
+export function applyVariant(v) {
+  edit.variant = v;
+  edit.locks = {};
+  if (v !== 'rotation') return;
+  const r = rotationFor();
+  if (!r) return;
+  edit.formation = r.name;
+  r.result.slots.forEach((s, i) => { if (s.player) edit.locks[i] = s.player.id; });
 }
 
 export function currentLineup() {

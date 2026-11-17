@@ -63,7 +63,7 @@ export const TRAINING_TYPES = {
   'Obrona': { full: ['CD', 'WB'], partial: [] },
   'Rozgrywanie': { full: ['IM'], partial: ['WI'] },
   'Skrzydła': { full: ['WI'], partial: ['WB'] },
-  'Podania': { full: ['IM', 'FW'], partial: [] },
+  'Podania': { full: ['IM', 'WI', 'FW'], partial: [] }, // HT: wszyscy pomocnicy i napastnicy
   'Strzały': { full: ['FW'], partial: [] },
   'Dośrodkowania': { full: ['WI', 'WB'], partial: [] },
   'Stałe fragmenty': { full: [], partial: ['GK', 'CD', 'WB', 'WI', 'IM', 'FW'] },

@@ -11,3 +11,6 @@ hattrick-standalone.html
 
 data/*.csv
 .ocr-venv/
+data/history/
+data/backup/
+data/*.bak-*

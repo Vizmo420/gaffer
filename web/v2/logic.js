@@ -1,0 +1,358 @@
+// Gaffer v2 — logika ekranów (czyste funkcje, bez DOM). Testy: test/v2-logic.test.mjs.
+// Silnik składu, oceny meczowe i finanse są w modułach v1 (optimizer.js, ht-ratings.js, planner.js).
+
+import { FORMATIONS, TRAINING_TYPES, bestFormation, bestLineup, eligiblePlayers, ratePlayerForSlot, isSuspended, youthPotential, detectYouthStar } from '../optimizer.js';
+import { PRIMARY_TRAINED_SKILL, weeksToNextLevel, projectSkillAfter } from '../training-calc.js';
+
+export const SKILLS = [
+  ['keeper', 'Bronienie'], ['defending', 'Defensywa'], ['playmaking', 'Rozgrywanie'], ['winger', 'Dośrodkowania'],
+  ['passing', 'Podania'], ['scoring', 'Skuteczność'], ['setPieces', 'St. fragmenty'],
+];
+export const SKILL_NAME = Object.fromEntries(SKILLS);
+
+export const SLOT_SHORT = { GK: 'BR', CD: 'ŚO', WB: 'BO', WI: 'SK', IM: 'ŚP', FW: 'NP' };
+export const SLOT_NAME = { GK: 'Bramkarz', CD: 'Środkowy obrońca', WB: 'Boczny obrońca', WI: 'Skrzydłowy', IM: 'Środkowy pomocnik', FW: 'Napastnik' };
+
+export const fullName = (p) => `${p.firstName ?? ''} ${p.lastName ?? ''}`.trim() || `#${p.id}`;
+
+const HOUR = 3600e3;
+const DAY = 24 * HOUR;
+
+// ---------------- mecze ----------------
+
+// Mecz bez wyniku, który już się odbył (2 h po starcie), czeka na wpisanie wyniku — nie jest „nadchodzący”.
+export function matchState(m, now = new Date()) {
+  if (m.homeGoals != null && m.awayGoals != null) return 'done';
+  if (m.status === 'FINISHED') return 'done';
+  const t = new Date(m.date).getTime();
+  if (Number.isFinite(t) && now.getTime() > t + 2 * HOUR) return 'needsResult';
+  return 'upcoming';
+}
+
+export const byDate = (a, b) => new Date(a.date) - new Date(b.date);
+
+export function matchId(m) {
+  return m.id || `${String(m.date).slice(0, 16)}|${m.homeTeamName}|${m.awayTeamName}`;
+}
+
+export function ensureMatchIds(list) {
+  return list.map((m) => (m.id ? m : { ...m, id: matchId(m) }));
+}
+
+export function nextMatch(matches, now = new Date()) {
+  return matches.filter((m) => matchState(m, now) === 'upcoming').sort(byDate)[0] ?? null;
+}
+
+export function pendingResults(matches, now = new Date()) {
+  return matches.filter((m) => matchState(m, now) === 'needsResult').sort(byDate);
+}
+
+export function opponentOf(m, team) {
+  const home = m.homeTeamName === team || (m.awayTeamName !== team && m.home === true);
+  return { home, name: (home ? m.awayTeamName : m.homeTeamName) || 'rywal' };
+}
+
+export function resultFor(m, team) {
+  if (m.homeGoals == null || m.awayGoals == null) return null;
+  const { home } = opponentOf(m, team);
+  const us = home ? m.homeGoals : m.awayGoals;
+  const them = home ? m.awayGoals : m.homeGoals;
+  return { us, them, letter: us > them ? 'W' : us === them ? 'R' : 'P' };
+}
+
+// ---------------- trening: piątek 02:30 ----------------
+
+export function nextTrainingUpdate(now = new Date()) {
+  const d = new Date(now);
+  d.setHours(2, 30, 0, 0);
+  const add = (5 - d.getDay() + 7) % 7;
+  d.setDate(d.getDate() + add);
+  if (d <= now) d.setDate(d.getDate() + 7);
+  return d;
+}
+
+export function trainingUpdatesBetween(a, b) {
+  const from = new Date(a), to = new Date(b);
+  if (!(to > from)) return 0;
+  let n = 0;
+  for (let d = nextTrainingUpdate(from); d <= to; d = new Date(d.getTime() + 7 * DAY)) n++;
+  return n;
+}
+
+// Zmiany umiejętności między dwiema migawkami. Skok bez aktualizacji treningu w międzyczasie
+// (albo większy niż liczba aktualizacji) to prawie na pewno błąd przy przepisywaniu danych.
+export function skillChanges(prev, curr) {
+  if (!prev?.players || !curr?.players) return [];
+  const before = new Map(prev.players.map((p) => [p.id, p]));
+  const updates = trainingUpdatesBetween(prev.at, curr.at);
+  const out = [];
+  for (const p of curr.players) {
+    const o = before.get(p.id);
+    if (!o) continue;
+    for (const [k, label] of SKILLS) {
+      const a = o[k], b = p[k];
+      if (a == null || b == null || a < 0 || b < 0 || a === b) continue;
+      const diff = b - a;
+      const suspicious = diff > 0 ? diff > updates : diff < -1 || updates === 0;
+      out.push({ id: p.id, name: fullName(p), skill: k, label, from: a, to: b, diff, suspicious });
+    }
+  }
+  return out;
+}
+
+export function rosterChanges(prev, curr) {
+  if (!prev?.players || !curr?.players) return { added: [], removed: [] };
+  const a = new Set(prev.players.map((p) => p.id));
+  const b = new Set(curr.players.map((p) => p.id));
+  return {
+    added: curr.players.filter((p) => !a.has(p.id)),
+    removed: prev.players.filter((p) => !b.has(p.id)),
+  };
+}
+
+export function playerHistory(snapshots, id) {
+  return snapshots
+    .map((s) => ({ at: s.at, p: s.players.find((x) => x.id === id) }))
+    .filter((x) => x.p)
+    .map((x) => ({ at: x.at, ...x.p }));
+}
+
+// ---------------- transfery ----------------
+
+// HT dolicza 20% pensji zawodnikom grającym poza swoim krajem. Zmiana zależy więc od tego,
+// skąd i dokąd przechodzi (Olofsson: z zagranicy do zagranicy, pensja bez zmian).
+export const WAGE_MODES = {
+  same: { factor: 1, label: 'bez zmian (już gra za granicą)' },
+  abroad: { factor: 1.2, label: '+20% (wyjeżdża ze swojego kraju)' },
+  home: { factor: 1 / 1.2, label: '−17% (Polak wraca do Polski)' },
+};
+
+export function wageAfterTransfer(salary, mode = 'abroad') {
+  return Math.round((salary || 0) * (WAGE_MODES[mode]?.factor ?? 1.2));
+}
+
+// ---------------- skład ----------------
+
+export function squadOpts(settings = {}) {
+  return {
+    useLoyalty: settings.useLoyalty ?? true,
+    allowInjured: false,
+    allowSuspended: false,
+    training: settings.trainingBonus ? { type: settings.trainingType, weight: 0.6 } : null,
+  };
+}
+
+// Najlepszy skład: formacja stała albo automatyczna. Zwraca { name, slots, result }.
+export function pickLineup(players, { formation = 'auto', locks = {}, opts = {} } = {}) {
+  const pool = eligiblePlayers(players, opts);
+  if (formation === 'auto' || !FORMATIONS[formation]) return bestFormation(pool, opts, locks);
+  const result = bestLineup(pool, FORMATIONS[formation], opts, locks);
+  return result ? { name: formation, slots: FORMATIONS[formation], result } : null;
+}
+
+// Alternatywy na dany slot: zawodnicy spoza wyjściowej XI posortowani wg oceny + różnica do obecnego.
+export function alternativesFor(players, lineup, slotIndex, opts = {}) {
+  const cur = lineup.result.slots[slotIndex];
+  const inXI = new Set(lineup.result.slots.map((s) => s.player?.id).filter(Boolean));
+  return eligiblePlayers(players, opts)
+    .filter((p) => !inXI.has(p.id))
+    .map((p) => ({ player: p, score: ratePlayerForSlot(p, cur.slot, opts) }))
+    .filter((x) => Number.isFinite(x.score))
+    .sort((a, b) => b.score - a.score)
+    .map((x) => ({ ...x, diff: x.score - cur.score }));
+}
+
+// Gdzie zawodnik gra najlepiej: 3 typy pozycji z oceną.
+export function bestSlots(p, opts = {}, n = 3) {
+  return ['GK', 'CD', 'WB', 'WI', 'IM', 'FW']
+    .map((slot) => ({ slot, score: ratePlayerForSlot(p, slot, { ...opts, allowInjured: true }) }))
+    .filter((x) => Number.isFinite(x.score))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, n);
+}
+
+export function lineupToText(lineup, { captain, setPieces, match, team } = {}) {
+  const rows = lineup.result.slots.map((s) => `${SLOT_SHORT[s.slot]}  ${s.player ? fullName(s.player) : '—'}`);
+  const head = match ? `${team ?? ''} — ${opponentOf(match, team).name}, ${new Date(match.date).toLocaleString('pl-PL', { dateStyle: 'short', timeStyle: 'short' })}` : '';
+  return [head, `Formacja ${lineup.name}`, ...rows, captain ? `Kapitan: ${fullName(captain)}` : '', setPieces ? `Stałe fragmenty: ${fullName(setPieces)}` : '']
+    .filter(Boolean)
+    .join('\n');
+}
+
+// ---------------- trening ----------------
+
+export function coverageFor(slot, trainingType) {
+  const map = TRAINING_TYPES[trainingType] || { full: [], partial: [] };
+  return map.full.includes(slot) ? 'full' : map.partial.includes(slot) ? 'partial' : 'none';
+}
+
+// Plan treningu dla zawodników XI (i ewentualnie wskazanych dodatkowych): kto trenuje, ile tygodni do skoku.
+export function trainingPlan(players, lineupSlots, cfg) {
+  const skill = PRIMARY_TRAINED_SKILL[cfg.type];
+  const slotOf = new Map(lineupSlots.filter((s) => s.player).map((s) => [s.player.id, s.slot]));
+  return players
+    .map((p) => {
+      const slot = slotOf.get(p.id) ?? null;
+      const coverage = slot ? coverageFor(slot, cfg.type) : 'none';
+      const w = coverage === 'none' || !skill ? { weeks: null } : weeksToNextLevel(p, { ...cfg, coverage });
+      const after13 = coverage === 'none' || !skill ? null : projectSkillAfter(p, { ...cfg, coverage }, 13);
+      return { player: p, slot, coverage, skill, level: skill ? p[skill] : null, weeks: w.weeks, nextLevel: w.nextLevel, after13 };
+    })
+    .sort((a, b) => (a.weeks ?? 999) - (b.weeks ?? 999));
+}
+
+// Porównanie typów treningu dla obecnej XI: ilu zawodników trenuje i jak szybko średnio.
+export function compareTrainingTypes(players, lineupSlots, cfg) {
+  return Object.keys(TRAINING_TYPES)
+    .filter((t) => PRIMARY_TRAINED_SKILL[t] && PRIMARY_TRAINED_SKILL[t] !== 'stamina')
+    .map((type) => {
+      const plan = trainingPlan(players, lineupSlots, { ...cfg, type }).filter((x) => x.weeks != null);
+      const pops13 = plan.reduce((a, x) => a + Math.max(0, Math.floor(x.after13 ?? x.level) - x.level), 0);
+      return { type, trained: plan.length, pops13 };
+    })
+    .sort((a, b) => b.pops13 - a.pops13 || b.trained - a.trained);
+}
+
+// ---------------- kogo sprzedać ----------------
+
+// Rezerwowy = ktoś z najlepszego drugiego składu (B) ułożonego z zawodników spoza XI.
+// Do rozważenia sprzedaży: poza składami A i B albo 31+ i poza XI — kosztuje pensję, a do gry nie jest potrzebny.
+export function sellAdvice(players, lineup, opts = {}) {
+  const slots = lineup?.slots ?? FORMATIONS['3-5-2'];
+  const inXI = new Set(lineup?.result?.slots.map((s) => s.player?.id).filter(Boolean) ?? []);
+  const rest = players.filter((p) => !inXI.has(p.id));
+  const b = bestLineup(eligiblePlayers(rest, { ...opts, allowInjured: true, allowSuspended: true }), slots, { ...opts, allowInjured: true }, {});
+  const inB = new Map((b?.result?.slots ?? b?.slots ?? []).filter((s) => s.player).map((s) => [s.player.id, s.slot]));
+  return rest
+    .map((p) => {
+      const best = bestSlots(p, opts, 1)[0];
+      const slot = inB.get(p.id) ?? best?.slot;
+      const age = p.ageYears ?? p.age;
+      const reasons = [];
+      if (!inB.has(p.id)) reasons.push('nie mieści się nawet w składzie rezerw');
+      if (age >= 31) reasons.push(`wiek ${p.age} — wartość będzie spadać`);
+      if (inB.has(p.id) && age < 31) reasons.push(`rezerwowy: ${SLOT_NAME[slot].toLowerCase()}`);
+      const verdict = p.transferListed ? 'listed' : !inB.has(p.id) || age >= 31 ? 'sell' : 'keep';
+      return { player: p, slot, inB: inB.has(p.id), verdict, reasons, weeklySaving: p.salary || 0 };
+    })
+    .sort((x, y) => (x.verdict === 'sell' ? 0 : 1) - (y.verdict === 'sell' ? 0 : 1) || y.weeklySaving - x.weeklySaving);
+}
+
+// ---------------- akademia ----------------
+
+export function youthVerdicts(youth, seniors, lineup) {
+  const star = detectYouthStar(youth);
+  const xiMin = {};
+  for (const s of lineup?.result?.slots ?? []) if (s.player) xiMin[s.slot] = Math.min(xiMin[s.slot] ?? Infinity, s.score);
+  return youth
+    .map((p) => {
+      const pot = youthPotential(p);
+      const best = ['GK', 'CD', 'WB', 'WI', 'IM', 'FW']
+        .map((slot) => ({ slot, score: ratePlayerForSlot(p, slot, { usePotential: true, youth: true, allowInjured: true }) }))
+        .sort((a, b) => b.score - a.score)[0];
+      const age = p.ageYears ?? p.age;
+      const reasons = [];
+      let verdict = 'watch';
+      if (p.id === star) { verdict = 'develop'; reasons.push('najwyższy potencjał w akademii'); }
+      else if (pot >= 34) { verdict = 'develop'; reasons.push('wysoki potencjał'); }
+      else if (pot < 22 && age >= 18) { verdict = 'release'; reasons.push('niski potencjał przy wieku 18+'); }
+      const ready = best && xiMin[best.slot] != null && best.score >= xiMin[best.slot] * 0.75;
+      if (ready && (p.canBePromotedInDays ?? 1) <= 0 && age >= 17) { verdict = 'promote'; reasons.push(`na pozycji ${SLOT_SHORT[best.slot]} blisko poziomu obecnej XI`); }
+      if (age >= 18.5 && verdict === 'watch') reasons.push('zbliża się koniec wieku juniora — zdecyduj wkrótce');
+      return { player: p, potential: pot, bestSlot: best?.slot, bestScore: best?.score ?? 0, verdict, reasons };
+    })
+    .sort((a, b) => b.potential - a.potential);
+}
+
+export const YOUTH_VERDICT = {
+  promote: { label: 'Awansuj', tone: 'good' },
+  develop: { label: 'Rozwijaj', tone: 'good' },
+  watch: { label: 'Obserwuj', tone: 'muted' },
+  release: { label: 'Zwolnij', tone: 'bad' },
+};
+
+// ---------------- lista „przed meczem” ----------------
+
+export function preMatchChecklist({ match, saved, lineup, players, settings = {}, rival }) {
+  const items = [];
+  const byId = new Map(players.map((p) => [p.id, p]));
+  const xi = (saved?.playerIds ?? lineup?.result?.slots.map((s) => s.player?.id) ?? []).map((id) => byId.get(id)).filter(Boolean);
+  items.push(saved ? { ok: true, text: 'Skład zapisany na ten mecz' } : { ok: false, text: 'Skład nie jest zapisany', hint: 'Skład → Zapisz' });
+  const blocked = xi.filter((p) => p.injuryLevel > 0 || isSuspended(p));
+  items.push(blocked.length ? { ok: false, text: `W składzie: ${blocked.map(fullName).join(', ')} (kontuzja lub pauza)` } : { ok: true, text: 'Nikt w składzie nie jest kontuzjowany ani zawieszony' });
+  const risky = xi.filter((p) => (p.yellowCards ?? 0) === 2);
+  if (risky.length) items.push({ ok: null, text: `Kartka = pauza: ${risky.map(fullName).join(', ')}` });
+  items.push(saved?.captainId ? { ok: true, text: `Kapitan: ${fullName(byId.get(saved.captainId) ?? { id: saved.captainId })}` } : { ok: false, text: 'Wybierz kapitana' });
+  items.push(saved?.setPiecesId ? { ok: true, text: `Stałe fragmenty: ${fullName(byId.get(saved.setPiecesId) ?? { id: saved.setPiecesId })}` } : { ok: false, text: 'Wybierz wykonawcę stałych fragmentów' });
+  items.push(rival ? { ok: true, text: 'Oceny rywala wpisane — prognoza gotowa' } : { ok: null, text: 'Brak ocen rywala — prognoza bez porównania', hint: 'Mecze → Rywal' });
+  if (settings.trainingType && lineup) {
+    const plan = trainingPlan(xi, lineup.result.slots.filter((s) => xi.some((p) => p.id === s.player?.id)), { type: settings.trainingType, ...(settings.trainingCfg || {}) });
+    const tr = plan.filter((x) => x.coverage !== 'none').length;
+    items.push({ ok: tr > 0, text: `Trening (${settings.trainingType}): ${tr} z ${xi.length} zawodników XI gra na trenowanej pozycji` });
+  }
+  return { items, done: items.filter((i) => i.ok === true).length, total: items.length };
+}
+
+// ---------------- alerty na start ----------------
+
+export function buildAlerts({ squad, matches = [], candidates = [], settings = {}, forecast, savedLineups = {}, team, now = new Date() }) {
+  const out = [];
+  for (const m of pendingResults(matches, now)) {
+    out.push({ tone: 'warn', text: `Wpisz wynik: ${opponentOf(m, team).name} (${fmtDate(m.date)})`, route: `#/wiecej/mecze/${encodeURIComponent(matchId(m))}` });
+  }
+  const nm = nextMatch(matches, now);
+  if (nm) {
+    const h = (new Date(nm.date) - now) / HOUR;
+    if (h < 48 && !savedLineups[matchId(nm)]) out.push({ tone: 'warn', text: `Mecz za ${h < 24 ? Math.max(1, Math.round(h)) + ' h' : '2 dni'} — skład niezapisany`, route: '#/sklad' });
+  }
+  const players = squad?.players ?? [];
+  const injured = players.filter((p) => p.injuryLevel > 0);
+  if (injured.length) out.push({ tone: 'bad', text: `Kontuzje: ${injured.map(fullName).join(', ')}`, route: '#/kadra' });
+  const susp = players.filter(isSuspended);
+  if (susp.length) out.push({ tone: 'bad', text: `Pauza za kartki: ${susp.map(fullName).join(', ')}`, route: '#/kadra' });
+  for (const c of candidates) {
+    const d = parseDeadline(c.deadline);
+    if (!d || c.status === 'bought' || c.status === 'lost') continue;
+    const h = (d - now) / HOUR;
+    if (h > 0 && h < 36) out.push({ tone: 'info', text: `Aukcja ${c.name}: koniec ${h < 1 ? 'za chwilę' : `za ${Math.round(h)} h`}`, route: '#/rynek' });
+    if (h <= 0 && h > -72 && !c.status) out.push({ tone: 'info', text: `Aukcja ${c.name} zakończona — kupiony?`, route: '#/rynek' });
+  }
+  if (settings.staffContractEnd) {
+    const days = (new Date(settings.staffContractEnd) - now) / DAY;
+    if (days >= 0 && days <= 28) out.push({ tone: 'warn', text: `Kontrakty sztabu kończą się za ${Math.ceil(days)} dni (${fmtDate(settings.staffContractEnd)})`, route: '#/rynek/finanse' });
+  }
+  if (squad?.fetchedAt) {
+    const age = (now - new Date(squad.fetchedAt)) / DAY;
+    if (age > 7) out.push({ tone: 'muted', text: `Dane kadry sprzed ${Math.floor(age)} dni — zaimportuj świeże`, route: '#/wiecej/import' });
+  }
+  if (forecast && forecast.minCash < 0) out.push({ tone: 'bad', text: `Prognoza: kasa spadnie pod zero w ${forecast.minWeek}. tygodniu`, route: '#/rynek/finanse' });
+  return out;
+}
+
+// ---------------- formatowanie ----------------
+
+export function parseDeadline(s) {
+  if (!s) return null;
+  const m = String(s).match(/(\d{2})\.(\d{2})\.(\d{4})\s+(\d{2}):(\d{2})/);
+  if (m) return new Date(+m[3], +m[2] - 1, +m[1], +m[4], +m[5]);
+  const d = new Date(s);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+export function fmtDate(iso, withTime = false) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleString('pl-PL', withTime ? { weekday: 'short', day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' } : { day: 'numeric', month: 'numeric' });
+}
+
+export const fmtMoney = (n) => (Number.isFinite(n) ? `${Math.round(n).toLocaleString('pl-PL')} zł` : '—');
+
+export function relTime(iso, now = new Date()) {
+  const h = (new Date(iso) - now) / HOUR;
+  if (!Number.isFinite(h)) return '';
+  const a = Math.abs(h);
+  if (a < 1) return h >= 0 ? 'za chwilę' : 'przed chwilą';
+  const days = Math.round(a / 24);
+  const txt = a < 24 ? `${Math.round(a)} h` : days === 1 ? '1 dzień' : `${days} dni`;
+  return h >= 0 ? `za ${txt}` : `${txt} temu`;
+}

@@ -23,6 +23,7 @@ const MIME = {
   '.json': 'application/json; charset=utf-8',
   '.webmanifest': 'application/manifest+json; charset=utf-8',
   '.svg': 'image/svg+xml',
+  '.png': 'image/png',
   '.map': 'application/json',
 };
 
@@ -37,6 +38,9 @@ const server = http.createServer((req, res) => {
   if (url === '/api/ai') return handleAi(req, res);
   if (url === '/api/ai/history') return handleAiHistory(req, res);
   if (url === '/api/ocr') return handleOcr(req, res);
+  if (url.startsWith('/api/store/')) return handleStore(req, res, url.slice('/api/store/'.length));
+  if (url === '/api/history') return handleHistory(req, res);
+  if (url === '/v2') { res.writeHead(301, { Location: '/v2/' }); return res.end(); }
 
   // /data/* -> katalog data/ (tylko pliki .json, tylko odczyt)
   if (url.startsWith('/data/')) {
@@ -49,7 +53,7 @@ const server = http.createServer((req, res) => {
   }
 
   // reszta -> web/
-  let rel = url === '/' ? '/index.html' : url;
+  let rel = url === '/' ? '/index.html' : url.endsWith('/') ? url + 'index.html' : url;
   const file = path.join(WEB_DIR, rel);
   if (!file.startsWith(WEB_DIR) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) {
     return send(res, 404, 'Not found');
@@ -159,6 +163,81 @@ async function handleOcr(req, res) {
   } catch (err) {
     return json(502, { error: err.message });
   }
+}
+
+// ------------------------- zapis danych (v2) -------------------------
+// Tylko nazwy z listy; każdy zapis robi kopię poprzedniej wersji w data/backup/ (20 ostatnich na plik).
+// Zapis kadry seniorów dodatkowo odkłada migawkę dnia do data/history/ (historia postępów).
+const STORE_NAMES = new Set(['squad', 'youth-squad', 'matches', 'club', 'v2-finance', 'v2-candidates', 'v2-settings', 'v2-lineups']);
+const BACKUP_DIR = path.join(DATA_DIR, 'backup');
+const HISTORY_DIR = path.join(DATA_DIR, 'history');
+const BACKUP_KEEP = 20;
+
+function writeJsonAtomic(file, obj) {
+  const tmp = file + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(obj, null, 1));
+  fs.renameSync(tmp, file);
+}
+
+function backup(name) {
+  const file = path.join(DATA_DIR, name + '.json');
+  if (!fs.existsSync(file)) return;
+  fs.mkdirSync(BACKUP_DIR, { recursive: true });
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  fs.copyFileSync(file, path.join(BACKUP_DIR, `${name}-${stamp}.json`));
+  const old = fs.readdirSync(BACKUP_DIR).filter((f) => f.startsWith(name + '-20')).sort();
+  for (const f of old.slice(0, Math.max(0, old.length - BACKUP_KEEP))) fs.rmSync(path.join(BACKUP_DIR, f), { force: true });
+}
+
+const dayOf = (iso) => {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? new Date().toISOString().slice(0, 10) : d.toISOString().slice(0, 10);
+};
+
+function snapshotSquad(squad) {
+  if (!Array.isArray(squad?.players)) return;
+  fs.mkdirSync(HISTORY_DIR, { recursive: true });
+  // data zapisu, nie squad.fetchedAt — ręczna zmiana (np. nowy zawodnik) to stan kadry z dziś
+  const now = new Date().toISOString();
+  writeJsonAtomic(path.join(HISTORY_DIR, `squad-${dayOf(now)}.json`), { at: now, players: squad.players });
+}
+
+async function handleStore(req, res, name) {
+  const json = (code, obj) => send(res, code, JSON.stringify(obj), MIME['.json']);
+  if (!STORE_NAMES.has(name)) return json(404, { error: 'nieznany zbiór danych' });
+  const file = path.join(DATA_DIR, name + '.json');
+  if (req.method === 'GET') {
+    if (!fs.existsSync(file)) return json(200, null);
+    return send(res, 200, fs.readFileSync(file), MIME['.json']);
+  }
+  if (req.method !== 'PUT') return json(405, { error: 'tylko GET / PUT' });
+  try {
+    const body = JSON.parse(await readBody(req, 5_000_000));
+    if (body == null || typeof body !== 'object') return json(400, { error: 'pusty zapis' });
+    backup(name);
+    writeJsonAtomic(file, body);
+    if (name === 'squad') snapshotSquad(body);
+    return json(200, { ok: true });
+  } catch (err) {
+    return json(400, { error: 'Nie zapisano: ' + err.message });
+  }
+}
+
+// Migawki kadry od najstarszej. Tylko pola potrzebne do wykresów, żeby odpowiedź była mała.
+const HISTORY_FIELDS = ['id', 'firstName', 'lastName', 'tsi', 'salary', 'form', 'stamina', 'keeper', 'defending', 'playmaking', 'winger', 'passing', 'scoring', 'setPieces', 'experience', 'loyalty'];
+function handleHistory(req, res) {
+  const json = (code, obj) => send(res, code, JSON.stringify(obj), MIME['.json']);
+  if (req.method !== 'GET') return json(405, { error: 'tylko GET' });
+  if (!fs.existsSync(HISTORY_DIR)) return json(200, []);
+  const out = fs.readdirSync(HISTORY_DIR).filter((f) => /^squad-\d{4}-\d{2}-\d{2}\.json$/.test(f)).sort().map((f) => {
+    try {
+      const s = JSON.parse(fs.readFileSync(path.join(HISTORY_DIR, f), 'utf8'));
+      return { at: s.at, players: s.players.map((p) => Object.fromEntries(HISTORY_FIELDS.map((k) => [k, p[k] ?? null]))) };
+    } catch {
+      return null;
+    }
+  }).filter(Boolean);
+  return json(200, out);
 }
 
 // Historia analiz: data/ai-history.json (lokalnie na Pi, wspólna dla wszystkich urządzeń).

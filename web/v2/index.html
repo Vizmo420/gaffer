@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="pl">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0e1013" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#f4f5f7" media="(prefers-color-scheme: light)" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Gaffer" />
+    <title>Gaffer</title>
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="icon" href="icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="icon-180.png" />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div class="shell">
+      <nav class="nav" aria-label="Główne">
+        <div class="brand"><span class="brand-mark">G</span><span class="brand-name">Gaffer</span></div>
+        <a href="#/" data-nav="start"><span class="nav-ic" data-icon="home"></span><span>Start</span></a>
+        <a href="#/sklad" data-nav="sklad"><span class="nav-ic" data-icon="pitch"></span><span>Skład</span></a>
+        <a href="#/kadra" data-nav="kadra"><span class="nav-ic" data-icon="squad"></span><span>Kadra</span></a>
+        <a href="#/rynek" data-nav="rynek"><span class="nav-ic" data-icon="market"></span><span>Rynek</span></a>
+        <a href="#/wiecej" data-nav="wiecej"><span class="nav-ic" data-icon="more"></span><span>Więcej</span></a>
+      </nav>
+      <div class="main">
+        <header class="topbar">
+          <button class="icon-btn back" id="back" hidden aria-label="Wstecz"></button>
+          <div class="topbar-text">
+            <h1 id="title">Gaffer</h1>
+            <p id="subtitle"></p>
+          </div>
+          <div class="topbar-actions" id="actions"></div>
+        </header>
+        <main id="view" class="view" tabindex="-1"><div class="loading">Wczytuję dane…</div></main>
+      </div>
+    </div>
+    <div id="sheet" class="sheet"></div>
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <script type="module" src="app.js"></script>
+  </body>
+</html>

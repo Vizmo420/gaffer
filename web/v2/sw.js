@@ -1,5 +1,5 @@
 // Gaffer v2: najpierw sieć (świeży kod i dane z Pi), kopia w pamięci telefonu na brak połączenia.
-const CACHE = 'gaffer2-v4';
+const CACHE = 'gaffer2-v5';
 const SHELL = ['./', './index.html', './style.css', './app.js', './ui.js', './store.js', './logic.js', './compute.js', './actions.js', './ocr.js', './parsers.js',
   './views/start.js', './views/sklad.js', './views/kadra.js', './views/rynek.js', './views/wiecej.js', './views/liga.js', './views/analizy.js', './views/powiadomienia.js',
   '../optimizer.js', '../ht-ratings.js', '../planner.js', '../training-calc.js', '../csv-import.js', '../screen-parse.js', './icon.svg'];

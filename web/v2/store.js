@@ -58,6 +58,7 @@ export const state = {
   lineups: {},
   league: null,
   transfers: [],
+  prices: [],
   history: [],
   online: true,
   loaded: false,
@@ -90,7 +91,7 @@ async function load(name, fallback) {
 }
 
 export async function loadAll() {
-  const [squad, youth, club, matches, finance, candidates, settings, lineups, league, transfers] = await Promise.all([
+  const [squad, youth, club, matches, finance, candidates, settings, lineups, league, transfers, prices] = await Promise.all([
     load('squad', { players: [] }),
     load('youth-squad', { players: [] }),
     load('club', null),
@@ -101,6 +102,7 @@ export async function loadAll() {
     load('v2-lineups', {}),
     load('v2-league', null),
     load('v2-transfers', null),
+    load('v2-prices', []),
   ]);
   state.squad = squad;
   state.youth = youth;
@@ -115,6 +117,7 @@ export async function loadAll() {
   state.lineups = lineups ?? {};
   state.league = { ...DEFAULT_LEAGUE, ...(league ?? {}) };
   state.transfers = transfers ?? DEFAULT_TRANSFERS;
+  state.prices = prices ?? [];
   if (state.settings.weights) setWeights(state.settings.weights);
   // kandydaci z v1 (localStorage tej samej strony) — przenosimy raz na serwer
   state.candidates = candidates ?? migrateV1Candidates();
@@ -157,6 +160,7 @@ const STORE_FILE = {
   lineups: ['v2-lineups', () => state.lineups],
   league: ['v2-league', () => state.league],
   transfers: ['v2-transfers', () => state.transfers],
+  prices: ['v2-prices', () => state.prices],
 };
 
 export async function save(what) {

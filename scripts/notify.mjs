@@ -11,7 +11,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { nextMatch, pendingResults, opponentOf, matchId, nextTrainingUpdate, minutesPlan, parseDeadline, fmtDate, fullName } from '../web/v2/logic.js';
+import { nextMatch, pendingResults, opponentOf, matchId, nextTrainingUpdate, minutesPlan, parseDeadline, fmtDate, fullName, resultFor, skillChanges, fmtMoney } from '../web/v2/logic.js';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const DATA = path.join(ROOT, 'data');
@@ -47,8 +47,8 @@ export async function send(cfg, { title, message, route = '', tags = [], priorit
 }
 
 // Zdarzenia do wysłania teraz. Czysta funkcja (testowalna): dane + czas → lista {key, title, message, route}.
-export function events({ squad, matches, lineups, candidates, settings, now = new Date() }) {
-  const on = { lineup: true, result: true, training: true, auction: true, ...(settings.notify ?? {}) };
+export function events({ squad, matches, lineups, candidates, settings, finance = null, league = null, history = [], now = new Date() }) {
+  const on = { lineup: true, result: true, training: true, auction: true, summary: true, ...(settings.notify ?? {}) };
   const team = settings.teamName || squad.teamName || 'Portowcy FC';
   const out = [];
   const nm = nextMatch(matches, now);
@@ -88,7 +88,41 @@ export function events({ squad, matches, lineups, candidates, settings, now = ne
     const days = (new Date(settings.staffContractEnd) - now) / (24 * HOUR);
     if (days > 0 && days <= 7) out.push({ key: `staff:${settings.staffContractEnd}`, title: 'Kontrakty sztabu', message: `Kończą się ${fmtDate(settings.staffContractEnd)} — zdecyduj, kogo przedłużyć.`, route: '#/rynek/finanse', tags: ['briefcase'] });
   }
+  // niedziela wieczorem: podsumowanie tygodnia
+  if (on.summary && now.getDay() === 0 && now.getHours() >= 19) {
+    const s = weeklySummary({ squad, matches, finance, league, history, team, now });
+    out.push({ key: `summary:${now.toISOString().slice(0, 10)}`, title: 'Gaffer: podsumowanie tygodnia', message: s, route: '', tags: ['clipboard'] });
+  }
   return out;
+}
+
+// Tekst podsumowania: wyniki z 7 dni, awanse z treningu, liga, kasa, następny mecz.
+export function weeklySummary({ squad, matches, finance, league, history = [], team, now = new Date() }) {
+  const L = [];
+  const weekAgo = new Date(now.getTime() - 7 * 24 * HOUR);
+  const played = matches.filter((m) => new Date(m.date) > weekAgo && new Date(m.date) <= now).map((m) => ({ m, r: resultFor(m, team) })).filter((x) => x.r);
+  L.push(played.length ? `Wyniki: ${played.map(({ m, r }) => `${r.letter} ${r.us}:${r.them} ${opponentOf(m, team).name}`).join(', ')}.` : 'Bez rozegranych meczów (albo wyniki niewpisane).');
+  const recent = history.filter((h) => new Date(h.at) > weekAgo);
+  if (history.length >= 2 && recent.length) {
+    const ch = skillChanges(history.at(-2), history.at(-1)).filter((c) => !c.suspicious && c.diff > 0);
+    L.push(ch.length ? `Trening: ${ch.map((c) => `${c.name.split(' ').at(-1)} ${c.label.toLowerCase()} ${c.to}`).join(', ')}.` : 'Trening: bez awansów umiejętności.');
+  } else L.push('Trening: zaktualizuj kadrę (zrzut tabeli), żeby zobaczyć awanse.');
+  if (league?.table?.length) {
+    const t = [...league.table].sort((a, b) => (b.points ?? 0) - (a.points ?? 0));
+    const i = t.findIndex((x) => x.name.toLowerCase().startsWith(team.toLowerCase().slice(0, 6)));
+    if (i >= 0) L.push(`Liga: ${i + 1}. miejsce, ${t[i].points ?? 0} pkt.`);
+  }
+  if (finance?.cash != null) L.push(`Kasa: ${fmtMoney(finance.cash)} (stan na ${fmtDate(finance.at)}).`);
+  const nm = nextMatch(matches, now);
+  if (nm) L.push(`Następny mecz: ${opponentOf(nm, team).name}, ${fmtDate(nm.date, true)}.`);
+  return L.join('\n');
+}
+
+function readHistory() {
+  const dir = path.join(DATA, 'history');
+  if (!fs.existsSync(dir)) return [];
+  return fs.readdirSync(dir).filter((f) => /^squad-\d{4}-\d{2}-\d{2}\.json$/.test(f)).sort().slice(-3)
+    .map((f) => { try { return JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')); } catch { return null; } }).filter(Boolean);
 }
 
 async function main(mode) {
@@ -105,6 +139,9 @@ async function main(mode) {
     lineups: read('v2-lineups', {}),
     candidates: read('v2-candidates', []),
     settings: read('v2-settings', {}) ?? {},
+    finance: read('v2-finance', null),
+    league: read('v2-league', null),
+    history: readHistory(),
   };
   const todo = events(data).filter((e) => !state.sent[e.key]);
   for (const e of todo) {

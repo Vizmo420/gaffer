@@ -3,7 +3,7 @@
 import { FORMATIONS } from '../optimizer.js';
 import { predictRatings, simulateMatch, relocateMidfield, hatStats, TACTICS } from '../ht-ratings.js';
 import { forecastCash, safeSpend } from '../planner.js';
-import { pickLineup, squadOpts, nextMatch, opponentOf, matchId, fullName, SLOT_NAME, SKILLS, youthVerdicts, sellAdvice, fmtMoney, calibration, applyCalibration, rotationLineup } from './logic.js';
+import { pickLineup, squadOpts, nextMatch, opponentOf, matchId, fullName, SLOT_NAME, SKILLS, youthVerdicts, sellAdvice, fmtMoney, calibration, applyCalibration, rotationLineup, priceEstimate } from './logic.js';
 import { state, players, teamName, savedLineup, weeklyWages } from './store.js';
 
 // Stan edycji składu (w pamięci, do zapisu). Klucz: id meczu.
@@ -90,10 +90,12 @@ export function prediction(lineup, m) {
   const opp = rivalRatings(m);
   const out = { ours, raw, hs: hatStats(ours), opp, sim: null, tactics: [] };
   if (opp) {
-    out.sim = simulateMatch(ours, opp, { tactic: edit.tactic, runs: 4000 });
+    const oppTactic = m?.rival?.tactic && TACTICS[m.rival.tactic] ? m.rival.tactic : 'normal';
+    out.oppTactic = oppTactic;
+    out.sim = simulateMatch(ours, opp, { tactic: edit.tactic, oppTactic, runs: 4000 });
     out.tactics = Object.keys(TACTICS).map((t) => {
       const r = corrected(predictRatings(lu, predictionCtx(m, t)));
-      const s = simulateMatch(r, opp, { tactic: t, runs: 4000 });
+      const s = simulateMatch(r, opp, { tactic: t, oppTactic, runs: 4000 });
       return { t, label: TACTICS[t], s, pts: (3 * s.win + s.draw) / 100 };
     }).sort((a, b) => b.pts - a.pts);
   }
@@ -148,3 +150,12 @@ export function aiContext() {
 }
 
 export const FORMATION_NAMES = Object.keys(FORMATIONS);
+
+// Baza cen: zrzuty „do bazy cen”, kandydaci z ceną i własne transfery. Bez duplikatów po nazwisku.
+export function priceEntries() {
+  const all = [...state.prices, ...state.candidates.filter((c) => c.price), ...state.transfers.filter((t) => t.price && t.tsi)];
+  const seen = new Map();
+  for (const e of all) seen.set(String(e.name ?? '').toLowerCase() + '|' + (e.age ?? ''), e);
+  return [...seen.values()];
+}
+export const marketValue = (p) => priceEstimate(priceEntries(), p);

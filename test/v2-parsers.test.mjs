@@ -89,3 +89,18 @@ test('prognoza końca sezonu: rozkład miejsc sumuje się do 100, mocny lider cz
   const even = seasonProjection({ table: zero, team: 'Ja', roundsPlayed: 0, runs: 2000 });
   assert.ok(weak.promo > even.promo * 1.5);
 });
+
+test('raport: taktyka obu drużyn, kartki i kontuzje z opisu, średnia z kilku raportów', async () => {
+  const { parseTactics, parseMatchEvents, averageRival, parseMood } = await import('../web/v2/parsers.js');
+  assert.deepEqual(parseTactics(L('match-report')), { home: 'normal', away: 'normal' });
+  const ln = (y, text) => ({ x: 300, y, w: 600, h: 24, text });
+  const ps = [{ id: 1, lastName: 'Kościliańczuk' }, { id: 2, lastName: 'Jop' }, { id: 3, lastName: 'Balov' }];
+  const ev = parseMatchEvents([ln(10, 'W 30. minucie Ignacy Koscilianczuk otrzymal zolta kartke za faul.'), ln(40, 'Aleksandr Balov doznal kontuzji i musial opuscic boisko.'), ln(70, 'Jop strzelil gola.')], ps);
+  assert.deepEqual(ev.map((e) => [e.player.id, e.type]), [[1, 'yellow'], [3, 'injury']]);
+  const avg = averageRival([{ ratings: { midfield: 8, defLeft: 5 }, wasHome: false, tactic: 'counter' }, { ratings: { midfield: 9, defLeft: 6 }, wasHome: false, tactic: 'counter' }, { ratings: { midfield: 7 }, wasHome: false, tactic: 'normal' }]);
+  assert.equal(avg.midfield, 8);
+  assert.equal(avg.defLeft, 5.5);
+  assert.equal(avg.tactic, 'counter');
+  const mood = parseMood([ln(10, 'Nastrój: spokojni'), ln(40, 'Pewność siebie'), { x: 700, y: 40, w: 200, h: 24, text: 'przyzwoita' }], { spirit: { spokojni: 5 } });
+  assert.deepEqual(mood, { spiritWord: 'spokojni', confWord: 'przyzwoita', spirit: 5, confidence: null });
+});

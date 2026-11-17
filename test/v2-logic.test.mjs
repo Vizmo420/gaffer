@@ -4,7 +4,7 @@ import {
   matchState, nextMatch, pendingResults, opponentOf, resultFor, nextTrainingUpdate, trainingUpdatesBetween,
   skillChanges, wageAfterTransfer, pickLineup, alternativesFor, sellAdvice, youthVerdicts, preMatchChecklist,
   buildAlerts, parseDeadline, coverageFor, trainingPlan, ensureMatchIds, relTime,
-  minutesPlan, rotationLineup, calibration, applyCalibration, transferSummary, squadValueSeries, matchId,
+  minutesPlan, rotationLineup, searchAdvice, priceEstimate, goalPlan, typeForSkill, youthPromotionAlerts, calibration, applyCalibration, transferSummary, squadValueSeries, matchId,
 } from '../web/v2/logic.js';
 import { SAMPLE_SQUAD, SAMPLE_YOUTH } from '../web/sample-squad.js';
 
@@ -151,4 +151,45 @@ test('skład treningowy: trenowane pozycje dostają rezerwowi, obrona i bramka z
   });
   assert.equal(r.getting.length, 7);
   assert.equal(rotationLineup(ps, { formation: '3-5-2', trainingType: 'Obrona' }).getting.length, 3);
+});
+
+test('rynek: najsłabsze pozycje i kryteria wyszukiwania', () => {
+  const lu = pickLineup(SAMPLE_SQUAD.players, { formation: '3-5-2' });
+  const a = searchAdvice(lu, { budget: 1234567 });
+  assert.equal(a.length, 2);
+  assert.ok(a[0].score <= a[1].score);
+  const main = Object.keys(a[0].criteria)[0];
+  assert.equal(a[0].criteria[main], Math.floor(a[0].player[main]) + 2);
+  assert.equal(a[0].criteria.priceMax, 1230000);
+});
+
+test('baza cen: mediana ceny za TSI z podobnych, za mało danych = brak wyceny', () => {
+  const e = [{ price: 1000000, tsi: 20000, age: 25 }, { price: 1500000, tsi: 25000, age: 26 }, { price: 900000, tsi: 15000, age: 24 }, { price: 9e6, tsi: 90000, age: 25 }];
+  const r = priceEstimate(e, { tsi: 20000, age: 25 });
+  assert.equal(r.n, 3);
+  assert.equal(r.value, 1200000); // mediana 60 zł/TSI × 20 000
+  assert.equal(priceEstimate(e.slice(0, 2), { tsi: 20000, age: 25 }).value, null);
+  // bez TSI: po najlepszej umiejętności
+  const s = [{ price: 1e6, age: 22, playmaking: 11 }, { price: 1.4e6, age: 23, playmaking: 12 }, { price: 1.2e6, age: 21, passing: 10 }, { price: 5e6, age: 22, playmaking: 16 }];
+  const r2 = priceEstimate(s, { age: 22, playmaking: 11 });
+  assert.equal(r2.mode, 'skill');
+  assert.equal(r2.value, 1200000);
+});
+
+test('cel treningowy: typ treningu, tygodnie, czy zdąży', () => {
+  assert.equal(typeForSkill('passing'), 'Podania');
+  const p = { age: 20, ageYears: 20, passing: 6 };
+  const cfg = { type: 'Podania', intensity: 100, coachLevel: 4, assistants: 10 };
+  const g = goalPlan(p, { skill: 'passing', target: 8, by: '2027-06-01' }, cfg, new Date('2026-11-17'));
+  assert.ok(g.weeks > 0 && g.weeks < 40);
+  assert.equal(g.ok, true);
+  assert.equal(g.active, true);
+  assert.equal(goalPlan(p, { skill: 'passing', target: 6 }, cfg).weeks, 0);
+  assert.equal(goalPlan(p, { skill: 'passing', target: 18, by: '2026-12-01' }, cfg, new Date('2026-11-17')).ok, false);
+});
+
+test('akademia: awans możliwy w ciągu tygodnia tylko dla wartych awansu', () => {
+  const y = [{ id: 1, canBePromotedInDays: 0 }, { id: 2, canBePromotedInDays: 30 }, { id: 3, canBePromotedInDays: 0 }];
+  const v = [{ player: y[0], verdict: 'promote' }, { player: y[1], verdict: 'develop' }, { player: y[2], verdict: 'release' }];
+  assert.deepEqual(youthPromotionAlerts(y, v).map((x) => x.player.id), [1]);
 });

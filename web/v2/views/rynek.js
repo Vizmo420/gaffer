@@ -2,8 +2,8 @@
 
 import { html, raw, icon, str, toast, openSheet, closeSheet, chip, cashChart, fmt1, signed, int, confirmSheet, sparkline } from '../ui.js';
 import { state, save, players, weeklyWages } from '../store.js';
-import { SKILLS, SLOT_NAME, SLOT_SHORT, fullName, sellAdvice, wageAfterTransfer, WAGE_MODES, parseDeadline, relTime, fmtMoney, fmtDate, transferSummary, squadValueSeries } from '../logic.js';
-import { bestXI, opts, forecast, spendable } from '../compute.js';
+import { SKILLS, SLOT_NAME, SLOT_SHORT, fullName, sellAdvice, wageAfterTransfer, WAGE_MODES, parseDeadline, relTime, fmtMoney, fmtDate, transferSummary, squadValueSeries, searchAdvice, SKILL_NAME } from '../logic.js';
+import { bestXI, opts, forecast, spendable, marketValue, priceEntries } from '../compute.js';
 import { scoreCandidate } from '../../planner.js';
 import { nameId } from '../../csv-import.js';
 import { readScreens, missingFields, properName } from '../ocr.js';
@@ -55,6 +55,7 @@ function buying() {
       <div class="stat"><b>${open.length}</b><span>obserwowanych</span></div></div>
       <p class="hint">„Można wydać” = najniższa prognozowana gotówka w 16 tygodniach minus rezerwa. Pensję nowego zawodnika licz osobno — widać ją przy kandydacie.</p>
     </section>
+    ${lookFor(budget)}
     <div class="row-btns" style="margin-bottom:12px"><button class="btn primary" id="shot">${icon('camera')} Ze zrzutu</button><button class="btn ghost" id="manual">${icon('plus')} Ręcznie</button></div>
     ${cards.length ? cards.map(({ c, e, d }) => {
       const miss = missingFields(c).filter((k) => !['form', 'stamina'].includes(k));
@@ -80,6 +81,19 @@ function buying() {
     }) : html`<div class="empty">${icon('market')}<p>Brak kandydatów. Zrób zrzuty karty zawodnika w aplikacji HT (umiejętności + strona z pensją) i dodaj je tutaj.</p></div>`}
     ${closed.length ? html`<button class="btn ghost block" id="toggleClosed">${ui.showClosed ? 'Ukryj' : 'Pokaż'} zakończone (${closed.length})</button>
       ${ui.showClosed ? html`<section class="card tight" style="margin-top:12px"><ul class="list">${closed.map((c) => html`<li class="item" style="cursor:default"><span class="item-main"><span class="item-title">${c.name}</span><span class="item-sub">${c.status === 'bought' ? 'kupiony' : 'przegrany'}${c.price ? ' · ' + fmtMoney(c.price) : ''}</span></span><button class="icon-btn" data-del="${c.id}" aria-label="Usuń">${icon('trash')}</button></li>`)}</ul></section>` : ''}` : ''}`;
+}
+
+// Najsłabsze pozycje XI i kryteria do wyszukiwarki transferów HT.
+function lookFor(budget) {
+  const adv = searchAdvice(bestXI(), { budget });
+  if (!adv.length) return '';
+  const crit = (c) => Object.entries(c).filter(([k, v]) => v != null && !(k === 'priceMax' && v <= 0)).map(([k, v]) => k === 'ageMax' ? `wiek do ${v}` : k === 'priceMax' ? `cena do ${short(v)}` : `${SKILL_NAME[k]?.toLowerCase() ?? k} od ${v}`).join(' · ');
+  return html`<h3 class="section-title">Kogo szukać</h3><section class="card">
+    ${adv.map((a, i) => html`<div style="${i ? 'margin-top:12px;padding-top:12px;border-top:1px solid var(--line)' : ''}"><div class="card-head"><h2>${SLOT_NAME[a.slot]}</h2>${chip(`teraz ${a.player.lastName} ${fmt1(a.score)}`)}</div>
+      <p class="small">Wyszukiwarka HT: <b>${crit(a.criteria)}</b></p></div>`)}
+    ${budget <= 0 ? html`<p class="alert warn" style="margin-top:10px">${icon('warn')}<span>Bezpieczny budżet to teraz 0 zł — prognoza kasy schodzi pod rezerwę ${short(state.settings.cashFloor)}. Kupno dopiero po sprzedaży kogoś albo po wpływach z meczów u siebie (Rynek → Finanse).</span></p>` : ''}
+    <p class="hint">Najsłabsze pozycje najlepszej XI. Główna umiejętność o 2 poziomy wyżej niż u obecnego zawodnika, cena w ramach bezpiecznego budżetu. Wyniki wyszukiwania zrzuć tutaj — trafią do kandydatów albo do bazy cen.</p>
+  </section>`;
 }
 
 const LABELS = { form: 'forma', stamina: 'kondycja', keeper: 'bronienie', defending: 'defensywa', playmaking: 'rozgrywanie', winger: 'dośrodkowania', passing: 'podania', scoring: 'skuteczność', setPieces: 'stałe fragmenty', salary: 'pensja', age: 'wiek' };
@@ -122,13 +136,25 @@ function bindBuying(el, app) {
 
 function shotFlow(app) {
   const body = openSheet(html`<p class="lead">Wybierz zrzuty z aplikacji HT: kartę zawodnika (umiejętności, pensja, TSI) albo listę wyników wyszukiwania. Zrzuty tego samego zawodnika łączę w jedną kartę.</p>
+    <div class="seg"><button data-as="cand" class="on">Kandydaci</button><button data-as="prices">Tylko do bazy cen</button></div>
     <label class="btn primary block">${icon('camera')} Wybierz zrzuty<input type="file" accept="image/*" multiple hidden id="f"></label><p class="hint" id="st">Około 8–10 sekund na zrzut.</p>`, { title: 'Kandydat ze zrzutu' });
+  let as = 'cand';
+  body.querySelectorAll('[data-as]').forEach((b) => (b.onclick = () => { as = b.dataset.as; body.querySelectorAll('[data-as]').forEach((x) => x.classList.toggle('on', x === b)); }));
   body.querySelector('#f').onchange = async (e) => {
     const files = [...e.target.files];
     if (!files.length) return;
     const st = body.querySelector('#st');
     try {
       const { cards, notes } = await readScreens(files, (m) => (st.textContent = m));
+      if (as === 'prices') {
+        const at = new Date().toISOString().slice(0, 10);
+        const fresh = cards.filter((c) => (c.price ?? c.highBid ?? c.startPrice) > 0).map((c) => ({ ...Object.fromEntries(Object.entries(c).filter(([k, v]) => v != null && k !== 'warn')), price: c.price ?? c.highBid ?? c.startPrice, at }));
+        state.prices = [...state.prices, ...fresh];
+        await save('prices');
+        toast(fresh.length ? `Baza cen: +${fresh.length} (razem ${state.prices.length})` : 'Nie znalazłem cen na zrzutach', fresh.length ? 'good' : 'bad');
+        if (fresh.length) { closeSheet(); app.render(); } else st.textContent = notes.join(' ');
+        return;
+      }
       let added = 0, updated = 0;
       for (const card of cards) {
         const name = properName(card, players());
@@ -186,11 +212,11 @@ function selling() {
       <div class="stat"><b>${sell.length}</b><span>do rozważenia</span></div>
       <div class="stat"><b>${short(saving)}</b><span>pensje / tydz.</span></div>
       <div class="stat"><b>${short(saving * 16)}</b><span>przez 16 tyg.</span></div></div>
-    <p class="hint">Zawodnicy spoza najlepszej XI. „Do rozważenia”: nie mieści się nawet w drugim składzie (rezerwy) albo ma 31+ lat. Ceny rynkowej Gaffer nie zna — sprawdź podobnych w wyszukiwarce transferów HT.</p></section>
+    <p class="hint">Zawodnicy spoza najlepszej XI. „Do rozważenia”: nie mieści się nawet w drugim składzie (rezerwy) albo ma 31+ lat. „Wart ok.” = szacunek z bazy cen (${priceEntries().length} ofert ze zrzutów); im więcej zrzutów wyników wyszukiwania, tym dokładniej.</p></section>
     <section class="card tight"><ul class="list">${list.map((s) => html`<li><button class="item" data-pid="${s.player.id}">
       <span class="avatar pos-${s.slot}" style="width:40px;height:40px;border-radius:12px;font-size:12px">${SLOT_SHORT[s.slot] ?? '?'}</span>
       <span class="item-main"><span class="item-title">${fullName(s.player)} ${chip(lbl[s.verdict], tone[s.verdict])}</span>
-      <span class="item-sub">${s.reasons.length ? s.reasons.join(' · ') : `rezerwowy: ${SLOT_NAME[s.slot]?.toLowerCase()}`}</span></span>
+      <span class="item-sub">${s.reasons.length ? s.reasons.join(' · ') : `rezerwowy: ${SLOT_NAME[s.slot]?.toLowerCase()}`}${(() => { const v = marketValue(s.player); return v?.value ? ` · wart ok. ${short(v.value)}` : ''; })()}</span></span>
       <span class="item-end"><b>${int(s.player.salary)}</b><small>zł/tydz.</small></span></button></li>`)}</ul></section>`;
 }
 

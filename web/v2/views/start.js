@@ -2,8 +2,8 @@
 
 import { html, raw, icon, str, toast, fmt1 } from '../ui.js';
 import { state, teamName, savedLineup, players } from '../store.js';
-import { nextMatch, pendingResults, opponentOf, buildAlerts, preMatchChecklist, fmtDate, relTime, fmtMoney, skillChanges, rosterChanges, fullName, matchId } from '../logic.js';
-import { currentLineup, prediction, forecast, spendable, startEdit, edit } from '../compute.js';
+import { nextMatch, pendingResults, opponentOf, buildAlerts, preMatchChecklist, fmtDate, relTime, fmtMoney, skillChanges, rosterChanges, fullName, matchId, youthVerdicts, youthPromotionAlerts } from '../logic.js';
+import { currentLineup, prediction, forecast, spendable, startEdit, edit, bestXI } from '../compute.js';
 import { saveResult } from '../actions.js';
 import { leagueStatus } from './liga.js';
 
@@ -62,6 +62,8 @@ export async function render(el, { app }) {
   // --- alerty ---
   const alerts = buildAlerts({ squad: state.squad, matches: state.matches, candidates: state.candidates, settings: state.settings, forecast: fc, savedLineups: state.lineups, team })
     .filter((a) => !a.text.startsWith('Wpisz wynik'));
+  const yp = youthPromotionAlerts(state.youth.players ?? [], youthVerdicts(state.youth.players ?? [], players(), bestXI()), { fetchedAt: state.youth.fetchedAt });
+  for (const y of yp) alerts.push({ tone: 'info', text: `Akademia: ${fullName(y.player)} ${y.days <= 0 ? 'może już awansować do seniorów' : `może awansować za ${y.days} ${y.days === 1 ? 'dzień' : 'dni'}`} (${y.verdict === 'promote' ? 'gotowy do składu' : 'duży potencjał'})`, route: '#/kadra/akademia' });
   if (alerts.length) {
     const ic = { warn: 'warn', bad: 'warn', info: 'info', muted: 'info' };
     parts.push(html`<h3 class="section-title">Do uwagi</h3>${alerts.map((a) => html`<a class="alert ${a.tone}" href="${a.route}">${icon(ic[a.tone])}<span>${a.text}</span></a>`)}`);

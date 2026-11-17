@@ -186,7 +186,7 @@ async function handleNotify(req, res, test) {
 // ------------------------- zapis danych (v2) -------------------------
 // Tylko nazwy z listy; każdy zapis robi kopię poprzedniej wersji w data/backup/ (20 ostatnich na plik).
 // Zapis kadry seniorów dodatkowo odkłada migawkę dnia do data/history/ (historia postępów).
-const STORE_NAMES = new Set(['squad', 'youth-squad', 'matches', 'club', 'v2-finance', 'v2-candidates', 'v2-settings', 'v2-lineups', 'v2-league', 'v2-transfers']);
+const STORE_NAMES = new Set(['squad', 'youth-squad', 'matches', 'club', 'v2-finance', 'v2-candidates', 'v2-settings', 'v2-lineups', 'v2-league', 'v2-transfers', 'v2-prices']);
 const BACKUP_DIR = path.join(DATA_DIR, 'backup');
 const HISTORY_DIR = path.join(DATA_DIR, 'history');
 const BACKUP_KEEP = 20;

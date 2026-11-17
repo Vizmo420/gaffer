@@ -373,3 +373,80 @@ export function seasonProjection({ table, team, roundsPlayed, rounds = 14, ours 
   const sumP = (a, b) => pct.slice(a - 1, b).reduce((x, y) => x + y, 0);
   return { pct, likely, avgPoints: ptsSum / runs, promo: sumP(1, 1), safe: sumP(2, 4), playoff: sumP(5, Math.min(6, n)), down: n > 6 ? sumP(7, n) : 0, roundsLeft: Math.max(0, rounds - roundsPlayed) };
 }
+
+// ---------------- raport meczu: taktyka, kartki, kontuzje ----------------
+
+const TACTIC_WORDS = [['kontra', 'counter'], ['srodk', 'aim'], ['skrzyd', 'aow'], ['kreatyw', 'creative'], ['dystans', 'longshots'], ['normal', 'normal'], ['pressing', 'pressing']];
+const tacticKey = (t) => TACTIC_WORDS.find(([w]) => strip(t).includes(w))?.[1] ?? null;
+
+// Taktyka obu drużyn z wiersza „Taktyka” (nie „Poziom taktyki”).
+export function parseTactics(lines) {
+  const r = rows(lines).find((x) => x.items.some((i) => letters(i.text) === 'taktyka'));
+  if (!r) return { home: null, away: null };
+  const label = r.items.find((i) => letters(i.text) === 'taktyka');
+  const vals = r.items.filter((i) => i.x > label.x).map((i) => tacticKey(i.text));
+  return { home: vals[0] ?? null, away: vals[1] ?? null };
+}
+
+// Kartki i kontuzje naszych zawodników z opisu meczu (zdania z nazwiskiem i słowem kluczowym).
+const EVENT_WORDS = [
+  ['red', /czerwon|wylecial z boiska|wyrzucon/],
+  ['yellow', /zolt|kartk/],
+  ['injury', /kontuz|uraz|zniesion|opuscic boisko|opuscil boisko/],
+];
+export function parseMatchEvents(lines, players) {
+  const text = rows(lines).map((r) => r.text).join(' ').replace(/\s+/g, ' ');
+  const sentences = text.split(/(?<=[.!?])\s+/);
+  const out = [];
+  for (const s of sentences) {
+    const t = strip(s);
+    const type = EVENT_WORDS.find(([, re]) => re.test(t))?.[0];
+    if (!type) continue;
+    const flat = letters(s);
+    for (const p of players) {
+      const ln = letters(p.lastName);
+      if (ln.length < 4 || !flat.includes(ln)) continue;
+      if (!out.some((e) => e.player.id === p.id && e.type === type)) out.push({ player: p, type, sentence: s.trim() });
+    }
+  }
+  return out;
+}
+
+// Średnia z kilku raportów rywala. Każdy raport przeliczamy „na wyjazd” (bez przewagi własnego boiska w pomocy).
+export function averageRival(reports, relocate) {
+  const keys = SECTOR_LABELS.map(([k]) => k);
+  const acc = Object.fromEntries(keys.map((k) => [k, []]));
+  const tactics = [];
+  for (const r of reports) {
+    const norm = relocate ? relocate(r.ratings, r.wasHome ? 'home' : 'away', 'away') : r.ratings;
+    for (const k of keys) if (Number(norm[k]) > 0) acc[k].push(Number(norm[k]));
+    if (r.tactic) tactics.push(r.tactic);
+  }
+  const out = { wasHome: false, reports: reports.length };
+  for (const k of keys) if (acc[k].length) out[k] = Math.round((acc[k].reduce((a, b) => a + b, 0) / acc[k].length) * 4) / 4;
+  const count = tactics.reduce((m, t) => m.set(t, (m.get(t) ?? 0) + 1), new Map());
+  out.tactic = [...count].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+  return out;
+}
+
+// ---------------- nastrój i pewność siebie ----------------
+// Słowa HT po polsku poznajemy z czasem: znane z ustawień (Gaffer zapamiętuje, co wybrałeś dla danego słowa).
+export function parseMood(lines, learned = {}) {
+  const rs = rows(lines);
+  const find = (re) => {
+    for (const r of rs) {
+      const idx = r.items.findIndex((i) => re.test(strip(i.text)));
+      if (idx < 0) continue;
+      const it = r.items[idx];
+      // słowo w tym samym napisie po dwukropku albo następny napis w wierszu
+      const after = it.text.split(/[:：]/)[1]?.trim() || r.items[idx + 1]?.text?.trim() || '';
+      const word = strip(after).replace(/[^a-z ]/g, '').trim();
+      if (word) return word;
+    }
+    return null;
+  };
+  const spiritWord = find(/nastroj|atmosfer|duch druzyny/);
+  const confWord = find(/pewnosc siebie|pewnos/);
+  const look = (w, kind) => (w && learned[kind]?.[w] != null ? learned[kind][w] : null);
+  return { spiritWord, confWord, spirit: look(spiritWord, 'spirit'), confidence: look(confWord, 'confidence') };
+}

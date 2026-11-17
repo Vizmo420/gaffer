@@ -4,13 +4,14 @@ import { html, raw, icon, str, toast, openSheet, closeSheet, chip, md, fmt1, con
 import { state, save, players, teamName, mergeImportedSquad, applyTheme } from '../store.js';
 import {
   byDate, matchState, matchId, opponentOf, resultFor, fmtDate, relTime, fullName, SLOT_NAME, SLOT_SHORT, SKILLS,
-  trainingPlan, compareTrainingTypes, skillChanges, rosterChanges, nextTrainingUpdate, minutesPlan,
+  trainingPlan, compareTrainingTypes, skillChanges, rosterChanges, nextTrainingUpdate, minutesPlan, goalPlan,
 } from '../logic.js';
 import { currentLineup, aiContext, startEdit, calib } from '../compute.js';
 import { ocrLines } from '../ocr.js';
 import * as liga from './liga.js';
 import * as analizy from './analizy.js';
-import { parseMatchRatings, whichSide, nameScore } from '../parsers.js';
+import { parseMatchRatings, whichSide, nameScore, parseTactics, parseMatchEvents, averageRival, parseMood } from '../parsers.js';
+import { relocateMidfield, TACTICS } from '../../ht-ratings.js';
 import { saveResult, upsertMatch, deleteMatch } from '../actions.js';
 import { importText } from '../../csv-import.js';
 import { TRAINING_TYPES } from '../../optimizer.js';
@@ -119,7 +120,8 @@ function matchDetail(el, id, app) {
     <h3 class="section-title">Oceny rywala</h3>
     <section class="card">
       <p class="small muted" style="margin-bottom:10px">Oceny sektorów rywala z raportu jego ostatniego meczu (Hattrick → drużyna rywala → mecze → raport, sekcja „Oceny szczegółowe”). Na ich podstawie Skład pokaże szanse i najlepszą taktykę.</p>
-      <label class="btn ghost block" style="margin-bottom:12px">${icon('camera')} Wczytaj ze zrzutu raportu<input type="file" accept="image/*" hidden id="rivShot"></label>
+      <label class="btn ghost block" style="margin-bottom:12px">${icon('camera')} Wczytaj zrzuty raportów (1–3 mecze rywala)<input type="file" accept="image/*" multiple hidden id="rivShot"></label>
+      ${rv.tactic ? html`<p class="small" style="margin-bottom:10px">Ulubiona taktyka rywala: <b>${TACTICS[rv.tactic] ?? rv.tactic}</b>${rv.reports > 1 ? ` (średnia z ${rv.reports} raportów)` : ''} — uwzględniona w prognozie.</p>` : ''}
       ${SECT.map(([k, l]) => html`<label class="field"><span>${l}</span><select data-r="${k}">${ratingOptions(rv[k])}</select></label>`)}
       <label class="toggle"><span>Rywal grał ten mecz u siebie</span><input type="checkbox" id="wasHome" ${rv.wasHome ? 'checked' : ''}></label>
       <button class="btn primary block" id="saveRiv">Zapisz oceny</button>
@@ -133,17 +135,20 @@ function matchDetail(el, id, app) {
     try { await saveResult(m, Number(us), Number(them)); toast('Wynik zapisany', 'good'); app.render(); } catch (e) { toast(e.message, 'bad'); }
   };
   el.querySelector('#saveRiv').onclick = async () => {
-    const rival = { wasHome: el.querySelector('#wasHome').checked };
+    const rival = { wasHome: el.querySelector('#wasHome').checked, tactic: rivTactic, reports: rivReports };
     el.querySelectorAll('[data-r]').forEach((s) => { if (s.value) rival[s.dataset.r] = Number(s.value); });
     try { await upsertMatch({ ...m, rival }); toast('Oceny rywala zapisane', 'good'); app.render(); } catch (e) { toast(e.message, 'bad'); }
   };
-  el.querySelector('#rivShot').onchange = (e) => readReport(e.target.files[0], 'rival', m, (rep, side) => {
-    const r = rep[side].ratings;
-    el.querySelectorAll('[data-r]').forEach((sel) => { if (r[sel.dataset.r] != null) sel.value = String(r[sel.dataset.r]); });
-    el.querySelector('#wasHome').checked = side === 'home';
-    toast(`Wczytano ${Object.keys(r).length} z 7 ocen — sprawdź i zapisz`, Object.keys(r).length === 7 ? 'good' : 'bad');
+  let rivTactic = rv.tactic ?? null, rivReports = rv.reports ?? null;
+  el.querySelector('#rivShot').onchange = (e) => readReports([...e.target.files], 'rival', m, (res) => {
+    const avg = averageRival(res.map(({ rep, side, tactics }) => ({ ratings: rep[side].ratings, wasHome: side === 'home', tactic: tactics[side] })), relocateMidfield);
+    el.querySelectorAll('[data-r]').forEach((sel) => { if (avg[sel.dataset.r] != null) sel.value = String(avg[sel.dataset.r]); });
+    el.querySelector('#wasHome').checked = false;
+    rivTactic = avg.tactic; rivReports = res.length;
+    const n = Object.keys(avg).filter((k) => !['wasHome', 'reports', 'tactic'].includes(k)).length;
+    toast(`Wczytano ${res.length} ${res.length === 1 ? 'raport' : 'raporty'}, ${n} z 7 sektorów — sprawdź i zapisz`, n === 7 ? 'good' : 'bad');
   });
-  el.querySelector('#ourShot')?.addEventListener('change', (e) => readReport(e.target.files[0], 'ours', m, async (rep, side) => {
+  el.querySelector('#ourShot')?.addEventListener('change', (e) => readReports([e.target.files[0]].filter(Boolean), 'ours', m, async ([{ rep, side, lines }]) => {
     const ours = rep[side].ratings;
     const other = side === 'home' ? 'away' : 'home';
     const patch = { ...m, ours, oursFromShot: true };
@@ -153,7 +158,12 @@ function matchDetail(el, id, app) {
       const home = opponentOf(m, team).home;
       patch.homeGoals = home ? usG : themG; patch.awayGoals = home ? themG : usG; patch.status = 'FINISHED';
     }
-    try { await upsertMatch(patch); toast('Oceny z raportu zapisane', 'good'); app.render(); } catch (err) { toast(err.message, 'bad'); }
+    try {
+      await upsertMatch(patch);
+      toast('Oceny z raportu zapisane', 'good');
+      const ev = parseMatchEvents(lines, players());
+      if (ev.length) confirmEvents(ev, app); else app.render();
+    } catch (err) { toast(err.message, 'bad'); }
   }));
   el.querySelector('#saveOurs')?.addEventListener('click', async () => {
     const ours = {};
@@ -193,27 +203,59 @@ function ourSection(m, lineup) {
 
 const fmt2 = (n) => (Number.isFinite(n) ? n.toFixed(2).replace('.', ',') : '—');
 
-// Zrzut raportu → oceny jednej drużyny. purpose: 'rival' (rywal w jego meczu) albo 'ours'.
-async function readReport(file, purpose, m, done) {
-  if (!file) return;
+// Zrzuty raportów → oceny jednej drużyny z każdego. purpose: 'rival' (rywal w jego meczach) albo 'ours'.
+// Gdy nie da się poznać, która kolumna to szukana drużyna, pytamy (osobno dla każdego raportu).
+async function readReports(files, purpose, m, done) {
+  if (!files.length) return;
   const team = teamName();
   const rivalName = opponentOf(m, team).name;
-  const body = openSheet(html`<p class="lead" id="st">Czytam raport… (ok. 10 s)</p><div id="pick"></div>`, { title: 'Raport meczu' });
+  const body = openSheet(html`<p class="lead" id="st">Czytam…</p><div id="pick"></div>`, { title: files.length > 1 ? 'Raporty meczów' : 'Raport meczu' });
+  const st = body.querySelector('#st');
+  const out = [];
   try {
-    const rep = parseMatchRatings(await ocrLines(file));
-    if (!rep.found) { body.querySelector('#st').textContent = 'Nie znalazłem ocen sektorów. Zrób zrzut sekcji „Oceny szczegółowe” z raportu meczu.'; return; }
-    let side = purpose === 'ours' ? whichSide(rep, team) : (() => {
-      const h = nameScore(rep.home.name, rivalName), a = nameScore(rep.away.name, rivalName);
-      return Math.max(h, a) >= 0.7 ? (h >= a ? 'home' : 'away') : null;
-    })();
-    const finish = (sd) => { closeSheet(); done(rep, sd); };
-    if (side) return finish(side);
-    body.querySelector('#st').textContent = `Odczytałem ${rep.found} z 7 sektorów. Która drużyna to ${purpose === 'ours' ? 'Twoja' : rivalName}?`;
-    body.querySelector('#pick').innerHTML = str(html`<div class="row-btns"><button class="btn primary" data-side="home">${rep.home.name || 'gospodarze'} (lewa kolumna)</button><button class="btn primary" data-side="away">${rep.away.name || 'goście'} (prawa kolumna)</button></div>`);
-    body.querySelectorAll('[data-side]').forEach((b) => (b.onclick = () => finish(b.dataset.side)));
+    for (const [i, f] of files.entries()) {
+      st.textContent = `Czytam raport ${i + 1} z ${files.length}… (ok. 10 s)`;
+      const lines = await ocrLines(f);
+      const rep = parseMatchRatings(lines);
+      if (!rep.found) { st.textContent = `Raport ${i + 1}: nie znalazłem ocen sektorów (sekcja „Oceny szczegółowe”).`; continue; }
+      const h = nameScore(rep.home.name, purpose === 'ours' ? team : rivalName), a = nameScore(rep.away.name, purpose === 'ours' ? team : rivalName);
+      let side = Math.max(h, a) >= 0.7 ? (h >= a ? 'home' : 'away') : null;
+      if (!side) side = await askSide(body, rep, purpose === 'ours' ? 'Twoja drużyna' : rivalName, i + 1);
+      out.push({ rep, side, lines, tactics: parseTactics(lines) });
+    }
+    if (!out.length) return;
+    closeSheet();
+    done(out);
   } catch (e) {
-    body.querySelector('#st').textContent = e.message;
+    st.textContent = e.message;
   }
+}
+
+function askSide(body, rep, who, n) {
+  return new Promise((resolve) => {
+    body.querySelector('#st').textContent = `Raport ${n}: odczytałem ${rep.found} z 7 sektorów. Która kolumna to ${who}?`;
+    body.querySelector('#pick').innerHTML = str(html`<div class="row-btns"><button class="btn primary" data-side="home">${rep.home.name || 'gospodarze'} (lewa)</button><button class="btn primary" data-side="away">${rep.away.name || 'goście'} (prawa)</button></div>`);
+    body.querySelectorAll('[data-side]').forEach((b) => (b.onclick = () => { body.querySelector('#pick').innerHTML = ''; resolve(b.dataset.side); }));
+  });
+}
+
+// Kartki i kontuzje z opisu meczu: do zatwierdzenia, potem zapis w kadrze.
+function confirmEvents(ev, app) {
+  const LBL = { yellow: 'żółta kartka', red: 'czerwona kartka (pauza)', injury: 'kontuzja' };
+  const body = openSheet(html`<p class="lead">W opisie meczu znalazłem:</p>
+    ${ev.map((e, i) => html`<label class="toggle"><span>${fullName(e.player)}: <b>${LBL[e.type]}</b><br><small class="muted">${e.sentence.slice(0, 140)}</small></span><input type="checkbox" data-ev="${i}" checked></label>`)}
+    <p class="hint">Długość kontuzji sprawdź w HT i popraw w karcie zawodnika — z opisu jej nie znam (wpiszę 1 tydzień).</p>
+    <button class="btn primary block" id="ok">Zapisz w kadrze</button>`, { title: 'Kartki i kontuzje', onClose: () => app.render() });
+  body.querySelector('#ok').onclick = async () => {
+    body.querySelectorAll('[data-ev]').forEach((cb) => {
+      if (!cb.checked) return;
+      const e = ev[Number(cb.dataset.ev)];
+      if (e.type === 'yellow') e.player.yellowCards = (e.player.yellowCards ?? 0) + 1;
+      if (e.type === 'red') e.player.yellowCards = 3;
+      if (e.type === 'injury') e.player.injuryLevel = Math.max(1, e.player.injuryLevel ?? 0);
+    });
+    try { await save('squad'); toast('Zapisano w kadrze', 'good'); closeSheet(); } catch (err) { toast(err.message, 'bad'); }
+  };
 }
 
 // ---------------- trening ----------------
@@ -241,6 +283,7 @@ function training(el, { app }) {
       <button class="btn primary block" id="saveT">Zapisz</button>
     </section>
     ${minutesSection(mp, s.trainingType)}
+    ${goalsSection(cfg)}
     <h3 class="section-title">Trenują teraz (skład ${lu?.name ?? '—'})</h3>
     <section class="card tight">${trained.length ? html`<ul class="list">${trained.map((x) => html`<li class="item" style="cursor:default">
       <span class="avatar pos-${x.slot}" style="width:40px;height:40px;border-radius:12px;font-size:12px">${SLOT_SHORT[x.slot]}</span>
@@ -250,10 +293,58 @@ function training(el, { app }) {
     <h3 class="section-title">Który trening da najwięcej obecnej XI</h3>
     <section class="card" style="padding:4px 16px">${cmp.map((c) => html`<div class="hist-row"><span>${c.type}${c.type === s.trainingType ? ' ' : ''}${c.type === s.trainingType ? chip('obecny', 'accent') : ''}</span><span class="tnum">${c.trained} trenuje · ~${c.pops13} awansów / 13 tyg.</span></div>`)}</section>
     <p class="hint">Szacunek z modelu społeczności (wiek, poziom, trener, asystenci, intensywność). HT nie publikuje wzoru — traktuj jako kierunek, nie wyrok. Zawodnik trenuje tylko wtedy, gdy zagra w meczu na trenowanej pozycji.</p>`);
+  el.querySelector('#addGoal').onclick = () => editGoal(app);
+  el.querySelectorAll('[data-delgoal]').forEach((b) => (b.onclick = async () => {
+    s.trainingGoals = (s.trainingGoals ?? []).filter((g) => g.id !== b.dataset.delgoal);
+    try { await save('settings'); app.render(); } catch (e) { toast(e.message, 'bad'); }
+  }));
   el.querySelector('#saveT').onclick = async () => {
     s.trainingType = el.querySelector('#tt').value;
     s.trainingCfg = { ...s.trainingCfg, intensity: Number(el.querySelector('#ti').value) || 100, coachLevel: Number(el.querySelector('#tc').value) || 4, assistants: Number(el.querySelector('#ta').value) || 0 };
     try { await save('settings'); toast('Zapisano', 'good'); app.render(); } catch (e) { toast(e.message, 'bad'); }
+  };
+}
+
+// Cele treningowe: kto ma osiągnąć jaki poziom do kiedy; ile tygodni potrzeba i jaki trening.
+const POS_PL = { GK: 'bramka', CD: 'środek obrony', WB: 'boki obrony', WI: 'skrzydła', IM: 'środek pomocy', FW: 'atak' };
+function goalsSection(cfg) {
+  const goals = state.settings.trainingGoals ?? [];
+  const byId = new Map(players().map((p) => [p.id, p]));
+  const rows = goals.map((g) => ({ g, p: byId.get(g.playerId) })).filter((x) => x.p);
+  return html`<h3 class="section-title">Cele na sezon</h3><section class="card">
+    ${rows.length ? rows.map(({ g, p }) => {
+      const r = goalPlan(p, g, cfg);
+      const lbl = SKILLS.find(([k]) => k === g.skill)?.[1] ?? g.skill;
+      return html`<div class="check ${r.weeks === 0 ? 'ok' : r.ok ? (r.active ? 'ok' : 'maybe') : 'no'}" style="align-items:flex-start"><span class="dot">${icon(r.weeks === 0 ? 'check' : r.ok ? 'training' : 'warn')}</span>
+        <span style="flex:1">${fullName(p)}: ${lbl.toLowerCase()} ${p[g.skill] ?? '?'} → <b>${g.target}</b>${g.by ? ` do ${fmtDate(g.by)}` : ''}
+        <small>${r.weeks === 0 ? 'cel osiągnięty' : r.weeks == null ? 'poza zasięgiem w 2 lata' : `potrzeba ok. ${r.weeks} tyg. treningu „${r.type}” (gra na: ${r.positions.map((x) => POS_PL[x]).join(', ')})${r.left != null ? ` · do terminu ${r.left} tyg.` : ''}${r.active ? '' : ' · obecny trening tego nie trenuje'}`}</small></span>
+        <button class="icon-btn" data-delgoal="${g.id}" aria-label="Usuń cel">${icon('trash')}</button></div>`;
+    }) : html`<p class="muted">Brak celów. Np. „Balov: dośrodkowania 13 do końca sezonu”.</p>`}
+    <button class="btn ghost block" id="addGoal" style="margin-top:10px">${icon('plus')} Dodaj cel</button>
+    <p class="hint">Szacunek przy pełnym meczu na trenowanej pozycji co tydzień, z obecnym trenerem i intensywnością. Gdy cele wymagają różnych treningów, zobaczysz, który typ ustawić i na ile tygodni.</p>
+  </section>`;
+}
+
+function editGoal(app) {
+  const ps = [...players()].sort((a, b) => fullName(a).localeCompare(fullName(b), 'pl'));
+  const end = new Date(state.league?.seasonStart ?? Date.now()); end.setDate(end.getDate() + 7 * ((state.league?.rounds ?? 14) + 2));
+  const body = openSheet(html`
+    <label class="field"><span>Zawodnik</span><select id="gp">${ps.map((p) => html`<option value="${p.id}">${fullName(p)}</option>`)}</select></label>
+    <div class="grid2"><label class="field"><span>Umiejętność</span><select id="gs">${SKILLS.map(([k, l]) => html`<option value="${k}">${l}</option>`)}</select></label>
+    <label class="field"><span>Poziom docelowy</span><input id="gt" type="number" inputmode="numeric" min="1" max="20"></label></div>
+    <label class="field"><span>Do kiedy (domyślnie koniec sezonu)</span><input id="gb" type="date" value="${end.toISOString().slice(0, 10)}"></label>
+    <button class="btn primary block" id="ok">Dodaj cel</button>`, { title: 'Cel treningowy' });
+  body.querySelector('#gp').onchange = body.querySelector('#gs').onchange = () => {
+    const p = ps.find((x) => x.id === Number(body.querySelector('#gp').value));
+    body.querySelector('#gt').placeholder = `teraz ${p?.[body.querySelector('#gs').value] ?? '?'}`;
+  };
+  body.querySelector('#gp').onchange();
+  body.querySelector('#ok').onclick = async () => {
+    const target = Number(body.querySelector('#gt').value);
+    if (!target) return toast('Wpisz poziom docelowy', 'bad');
+    const g = { id: `g-${Date.now().toString(36)}`, playerId: Number(body.querySelector('#gp').value), skill: body.querySelector('#gs').value, target, by: body.querySelector('#gb').value || null };
+    state.settings.trainingGoals = [...(state.settings.trainingGoals ?? []), g];
+    try { await save('settings'); closeSheet(); app.render(); } catch (e) { toast(e.message, 'bad'); }
   };
 }
 
@@ -399,7 +490,8 @@ async function settingsPage(el, { app }) {
         <label class="field"><span>Nastrój drużyny</span><select id="sp">${SPIRIT.map((t, i) => html`<option value="${i}" ${Number(s.spirit) === i ? 'selected' : ''}>${t}</option>`)}</select></label>
         <label class="field"><span>Pewność siebie</span><select id="cf">${CONF.map((t, i) => html`<option value="${i}" ${Number(s.confidence) === i ? 'selected' : ''}>${t}</option>`)}</select></label>
       </div>
-      <p class="hint" style="margin:-4px 0 12px">Skala jak w HT: nastrój 0–10, pewność siebie 0–9. Wpływają na prognozę (pomoc i atak).</p>
+      <label class="btn ghost block" style="margin-bottom:8px">${icon('camera')} Nastrój i pewność ze zrzutu<input type="file" accept="image/*" hidden id="moodShot"></label>
+      <p class="hint" id="moodSt" style="margin:-4px 0 12px">Skala jak w HT: nastrój 0–10, pewność siebie 0–9. Wpływają na prognozę (pomoc i atak). Zrzut: HT → Drużyna (albo Trening) z widocznym nastrojem i pewnością siebie. Nowe słowo ustawisz raz — Gaffer je zapamięta.</p>
       <label class="field"><span>Wygląd</span><select id="th">${[['auto', 'Jak w telefonie'], ['dark', 'Ciemny'], ['light', 'Jasny']].map(([v, l]) => html`<option value="${v}" ${s.theme === v ? 'selected' : ''}>${l}</option>`)}</select></label>
       <button class="btn primary block" id="ok">Zapisz</button>
     </section>
@@ -407,11 +499,33 @@ async function settingsPage(el, { app }) {
     <section class="card"><h2>Dane</h2><p class="lead" style="margin-top:6px">Wszystko zapisuje się na Pi (folder data/). Przed każdą zmianą robię kopię poprzedniej wersji (20 ostatnich w data/backup/).</p></section>`);
   bindNotify(el);
   el.querySelector('#th').onchange = (e) => { s.theme = e.target.value; applyTheme(); };
+  let moodWords = null;
+  el.querySelector('#moodShot').onchange = async (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
+    const st = el.querySelector('#moodSt');
+    st.textContent = 'Czytam zrzut… (ok. 10 s)';
+    try {
+      const r = parseMood(await ocrLines(f), s.moodWords ?? {});
+      moodWords = r;
+      if (!r.spiritWord && !r.confWord) { st.textContent = 'Nie znalazłem słów „Nastrój” ani „Pewność siebie” na zrzucie.'; return; }
+      if (r.spirit != null) el.querySelector('#sp').value = String(r.spirit);
+      if (r.confidence != null) el.querySelector('#cf').value = String(r.confidence);
+      const unknown = [r.spiritWord && r.spirit == null ? `nastrój „${r.spiritWord}”` : '', r.confWord && r.confidence == null ? `pewność „${r.confWord}”` : ''].filter(Boolean);
+      st.textContent = unknown.length ? `Odczytałem ${unknown.join(' i ')} — tego słowa jeszcze nie znam. Wybierz poziom z listy i zapisz, zapamiętam.` : 'Ustawione ze zrzutu — zapisz.';
+    } catch (err) { st.textContent = err.message; }
+  };
   el.querySelector('#ok').onclick = async () => {
     s.teamName = el.querySelector('#tn').value.trim() || s.teamName;
     s.formation = el.querySelector('#fm').value;
     s.spirit = Number(el.querySelector('#sp').value);
     s.confidence = Number(el.querySelector('#cf').value);
+    if (moodWords) {
+      const mw = { spirit: { ...(s.moodWords?.spirit ?? {}) }, confidence: { ...(s.moodWords?.confidence ?? {}) } };
+      if (moodWords.spiritWord) mw.spirit[moodWords.spiritWord] = s.spirit;
+      if (moodWords.confWord) mw.confidence[moodWords.confWord] = s.confidence;
+      s.moodWords = mw;
+    }
     s.theme = el.querySelector('#th').value;
     try { await save('settings'); toast('Zapisano', 'good'); app.render(); } catch (e) { toast(e.message, 'bad'); }
   };

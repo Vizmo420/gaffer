@@ -1,7 +1,7 @@
 // Które powiadomienia wysłać (bez wysyłania).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { events } from '../scripts/notify.mjs';
+import { events, weeklySummary } from '../scripts/notify.mjs';
 
 const T = 'Portowcy FC';
 const base = { squad: { players: [] }, lineups: {}, candidates: [], settings: { teamName: T } };
@@ -23,4 +23,15 @@ test('piątek po treningu: prośba o aktualizację kadry; wyłączone typy nie i
   const now = new Date('2026-11-20T08:00:00');
   assert.deepEqual(events({ ...base, matches: [], now }).map((x) => x.key), ['training:2026-11-20']);
   assert.equal(events({ ...base, matches: [], settings: { notify: { training: false } }, now }).length, 0);
+});
+
+test('niedzielne podsumowanie: wyniki tygodnia, kasa, następny mecz', () => {
+  const now = new Date('2026-11-22T20:00:00');
+  const matches = [match('2026-11-18T21:45:00', { homeGoals: 0, awayGoals: 4 }), { ...match('2026-11-29T09:00:00'), id: 2, awayTeamName: 'Lomboo' }];
+  const e = events({ ...base, matches, finance: { cash: 1191522, at: '2026-11-17' }, now });
+  assert.ok(e.some((x) => x.key === 'summary:2026-11-22'));
+  const t = weeklySummary({ squad: { players: [] }, matches, finance: { cash: 1191522, at: '2026-11-17' }, team: T, now });
+  assert.match(t, /P 0:4 Rywal/);
+  assert.match(t, /1\s191\s522\szł/);
+  assert.match(t, /Lomboo/);
 });

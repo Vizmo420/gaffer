@@ -2,8 +2,8 @@
 
 import { html, raw, icon, str, toast, openSheet, closeSheet, skillBar, chip, sparkline, fmt1, int, confirmSheet } from '../ui.js';
 import { state, save, players, teamName, playerFromCard } from '../store.js';
-import { SKILLS, SLOT_SHORT, SLOT_NAME, fullName, bestSlots, playerHistory, sellAdvice, youthVerdicts, YOUTH_VERDICT, trainingPlan, fmtMoney, fmtDate } from '../logic.js';
-import { bestXI, opts, currentLineup } from '../compute.js';
+import { SKILLS, SLOT_SHORT, SLOT_NAME, fullName, bestSlots, playerHistory, sellAdvice, youthVerdicts, YOUTH_VERDICT, trainingPlan, fmtMoney, fmtDate, promoDays } from '../logic.js';
+import { bestXI, opts, currentLineup, marketValue } from '../compute.js';
 import { specialtyName, isSuspended } from '../../optimizer.js';
 import { findPlayer, CARD_FIELDS, ocrLines } from '../ocr.js';
 import { parseScreen, mergeCards } from '../../screen-parse.js';
@@ -100,7 +100,7 @@ function academy() {
     return html`<li><button class="item" data-yid="${x.player.id}">
       <span class="avatar pos-${x.bestSlot}" style="width:40px;height:40px;border-radius:12px;font-size:12px">${SLOT_SHORT[x.bestSlot]}</span>
       <span class="item-main"><span class="item-title">${fullName(x.player)}</span>
-      <span class="item-sub">${x.player.age} l. ${x.player.ageDays} dni · potencjał ${x.potential}${x.reasons[0] ? ' · ' + x.reasons[0] : ''}</span></span>
+      <span class="item-sub">${x.player.age} l. ${x.player.ageDays} dni · potencjał ${x.potential} · ${(() => { const d = promoDays(x.player, state.youth.fetchedAt); return d == null ? '' : d <= 0 ? 'awans możliwy' : `awans za ${d} dni`; })()}${x.reasons[0] ? ' · ' + x.reasons[0] : ''}</span></span>
       <span class="item-end">${chip(vd.label, vd.tone)}</span></button></li>`;
   })}</ul></section>
   <p class="hint">Potencjał = suma maksymalnych znanych umiejętności (nieznane liczone jako bieżące). Ocena Gaffera, nie dane HT — juniorzy z wieloma „?” mogą być lepsi, niż wygląda.</p>`;
@@ -155,6 +155,7 @@ export function openPlayer(p, app) {
       <div><span>Pensja</span><b>${fmtMoney(p.salary)}</b></div>
       <div><span>Doświadczenie / przyw.</span><b>${p.experience ?? '?'} / ${p.leadership ?? '?'}</b></div>
       <div><span>Lojalność</span><b>${p.loyalty ?? '?'}${p.motherClubBonus ? ' · wychowanek' : ''}</b></div>
+      <div><span>Wartość rynkowa</span><b>${(() => { const v = marketValue(p); return v?.value ? `ok. ${fmtMoney(v.value)}` : `za mało danych (${v?.n ?? 0}/3)`; })()}</b></div>
       <div><span>Ostatni mecz</span><b>${p.lastMatchDate ? fmtDate(p.lastMatchDate) : p.weeksSinceLastMatch != null ? `${p.weeksSinceLastMatch} tyg. temu` : '?'}</b></div>
     </div>
     <h3 class="section-title">Umiejętności${prev ? html` <small class="muted" style="text-transform:none;letter-spacing:0">zmiana od ${fmtDate(prev.at)}</small>` : ''}</h3>

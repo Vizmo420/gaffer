@@ -1,7 +1,7 @@
 // Gaffer v2 — logika ekranów (czyste funkcje, bez DOM). Testy: test/v2-logic.test.mjs.
 // Silnik składu, oceny meczowe i finanse są w modułach v1 (optimizer.js, ht-ratings.js, planner.js).
 
-import { FORMATIONS, TRAINING_TYPES, bestFormation, bestLineup, eligiblePlayers, ratePlayerForSlot, isSuspended, youthPotential, detectYouthStar } from '../optimizer.js';
+import { FORMATIONS, TRAINING_TYPES, WEIGHTS, bestFormation, bestLineup, eligiblePlayers, ratePlayerForSlot, isSuspended, youthPotential, detectYouthStar } from '../optimizer.js';
 import { PRIMARY_TRAINED_SKILL, weeksToNextLevel, projectSkillAfter } from '../training-calc.js';
 
 export const SKILLS = [
@@ -475,4 +475,94 @@ export function rotationLineup(players, { formation = 'auto', opts = {}, trainin
   if (!lu) return null;
   const getting = trained.map((i) => lu.result.slots[i].player).filter(Boolean);
   return { ...lu, strong, rested, getting };
+}
+
+// ---------------- rynek: kogo szukać ----------------
+
+// Najsłabsze pozycje najlepszej XI i gotowe kryteria do wyszukiwarki transferów HT.
+export function searchAdvice(lineup, { budget = null, n = 2 } = {}) {
+  if (!lineup) return [];
+  const bySlot = new Map();
+  for (const s of lineup.result.slots) {
+    if (!s.player) continue;
+    const cur = bySlot.get(s.slot);
+    if (!cur || s.score < cur.score) bySlot.set(s.slot, s);
+  }
+  const avg = lineup.result.slots.reduce((a, s) => a + (s.score || 0), 0) / lineup.result.slots.length;
+  return [...bySlot.values()]
+    .sort((a, b) => a.score - b.score)
+    .slice(0, n)
+    .map((s) => {
+      const w = Object.entries(WEIGHTS[s.slot] ?? {}).sort((a, b) => b[1] - a[1]);
+      const [main, second] = [w[0]?.[0], w[1]?.[0]];
+      const p = s.player;
+      return {
+        slot: s.slot, player: p, score: s.score, gap: avg - s.score,
+        criteria: {
+          [main]: Math.max(1, Math.floor(p[main] ?? 0) + 2),
+          ...(second ? { [second]: Math.max(1, Math.floor(p[second] ?? 0)) } : {}),
+          ageMax: 27,
+          priceMax: budget != null ? Math.max(0, Math.floor(budget / 10000) * 10000) : null,
+        },
+      };
+    });
+}
+
+// ---------------- baza cen ----------------
+
+// Szacunkowa cena z podobnych ofert. Najpierw po TSI (wiek ±2, TSI 0,6–1,6×: mediana ceny za 1 TSI × TSI),
+// a gdy ofert z TSI jest za mało (lista wyników wyszukiwania nie pokazuje TSI) — po najlepszej umiejętności (±1) i wieku.
+const topSkill = (x) => Math.max(...SKILLS.map(([k]) => x[k] ?? 0));
+const median = (a) => { const r = [...a].sort((x, y) => x - y); return r.length % 2 ? r[(r.length - 1) / 2] : (r[r.length / 2 - 1] + r[r.length / 2]) / 2; };
+export function priceEstimate(entries, p, { min = 3 } = {}) {
+  if (!p) return null;
+  const age = p.ageYears ?? p.age;
+  const near = (e) => e.price > 0 && Math.abs((e.age ?? age) - age) <= 2;
+  if (p.tsi) {
+    const like = entries.filter((e) => near(e) && e.tsi > 0 && e.tsi >= p.tsi * 0.6 && e.tsi <= p.tsi * 1.6);
+    if (like.length >= min) {
+      const r = like.map((e) => e.price / e.tsi).sort((a, b) => a - b);
+      return { value: Math.round((median(r) * p.tsi) / 10000) * 10000, low: Math.round(r[0] * p.tsi), high: Math.round(r.at(-1) * p.tsi), n: like.length, mode: 'tsi' };
+    }
+  }
+  const top = topSkill(p);
+  const like = entries.filter((e) => near(e) && SKILLS.some(([k]) => e[k] != null) && Math.abs(topSkill(e) - top) <= 1);
+  if (like.length < min) return { value: null, n: like.length };
+  const prices = like.map((e) => e.price).sort((a, b) => a - b);
+  return { value: Math.round(median(prices) / 10000) * 10000, low: prices[0], high: prices.at(-1), n: like.length, mode: 'skill' };
+}
+
+// ---------------- cele treningowe ----------------
+
+export function typeForSkill(skill) {
+  return Object.keys(TRAINING_TYPES).find((t) => PRIMARY_TRAINED_SKILL[t] === skill && TRAINING_TYPES[t].full.length) ?? null;
+}
+
+// Ile tygodni treningu potrzeba do celu i czy zdąży przed terminem (przy pełnym meczu na trenowanej pozycji co tydzień).
+export function goalPlan(p, goal, cfg, now = new Date()) {
+  const type = typeForSkill(goal.skill);
+  if (!type) return { type: null, weeks: null, ok: false };
+  let weeks = null;
+  if ((p[goal.skill] ?? 0) >= goal.target) weeks = 0;
+  else for (let w = 1; w <= 104; w++) { const v = projectSkillAfter(p, { ...cfg, type, coverage: 'full' }, w); if (v != null && v >= goal.target) { weeks = w; break; } }
+  const left = goal.by ? Math.floor((new Date(goal.by) - now) / (7 * DAY)) : null;
+  const positions = TRAINING_TYPES[type].full;
+  return { type, weeks, left, ok: weeks != null && (left == null || weeks <= left), active: cfg.type === type, positions };
+}
+
+// ---------------- akademia: kto może awansować ----------------
+
+// Dni do możliwego awansu liczone od dnia eksportu CSV (wartość z HT starzeje się z każdym dniem).
+export function promoDays(p, fetchedAt, now = new Date()) {
+  if (p.canBePromotedInDays == null) return null;
+  const passed = fetchedAt ? Math.floor((now - new Date(fetchedAt)) / DAY) : 0;
+  return Math.max(0, p.canBePromotedInDays - Math.max(0, passed));
+}
+
+export function youthPromotionAlerts(youth = [], verdicts = [], { fetchedAt = null, now = new Date() } = {}) {
+  const v = new Map(verdicts.map((x) => [x.player.id, x.verdict]));
+  return youth
+    .filter((p) => v.get(p.id) === 'promote' || v.get(p.id) === 'develop')
+    .map((p) => ({ player: p, verdict: v.get(p.id), days: promoDays(p, fetchedAt, now) }))
+    .filter((x) => x.days != null && x.days <= 7);
 }

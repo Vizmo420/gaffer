@@ -8,6 +8,7 @@ const TYPES = [
   ['result', 'Wpisz wynik po meczu'],
   ['training', 'Trening: piątek rano „zaktualizuj kadrę” i w czwartek wieczorem, gdy ktoś nie ma minut'],
   ['auction', 'Ostatnia godzina aukcji obserwowanego zawodnika'],
+  ['summary', 'Niedziela wieczorem: podsumowanie tygodnia'],
 ];
 
 let info = null;
@@ -15,7 +16,7 @@ export async function notifySection() {
   if (!info) {
     try { info = await (await fetch('/api/notify', { cache: 'no-store' })).json(); } catch { info = { enabled: false }; }
   }
-  const on = { lineup: true, result: true, training: true, auction: true, ...(state.settings.notify ?? {}) };
+  const on = { lineup: true, result: true, training: true, auction: true, summary: true, ...(state.settings.notify ?? {}) };
   const sub = info.enabled ? `${info.server}/${info.topic}` : null;
   return html`<h3 class="section-title">Powiadomienia na telefon</h3><section class="card">
     ${info.enabled ? html`

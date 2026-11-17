@@ -318,3 +318,58 @@ export function detectKind(lines) {
   if (/pensja|tsi/.test(t) && (t.match(/\d{2}\.\d{2}\.\d{4}/g) || []).length >= 5) return 'squadTable';
   return 'other';
 }
+
+// ---------------- prognoza końca sezonu ----------------
+
+// Siła drużyny = punkty na mecz z „poduszką” (na starcie sezonu wszyscy podobni) × Twoja ocena (1–5, domyślnie 3).
+const STRENGTH_MULT = [0, 0.55, 0.78, 1, 1.28, 1.6];
+function rng(seed) { let s = seed >>> 0; return () => ((s = (s * 1664525 + 1013904223) >>> 0) / 2 ** 32); }
+
+// Symulacja pozostałych kolejek (Monte Carlo). table: [{name, played, points}], fixed: {round: {opp, home}} dla nas.
+// Kolejki bez znanego rywala losują pary; mecz: szansa wygranej z różnicy sił, ok. 25% remisów, przewaga własnego boiska.
+export function seasonProjection({ table, team, roundsPlayed, rounds = 14, ours = {}, strength = {}, runs = 4000, seed = 11 }) {
+  const teams = table.map((t) => t.name);
+  const n = teams.length;
+  const idx = new Map(teams.map((t, i) => [t, i]));
+  const me = idx.get(team);
+  if (me == null || n < 2) return null;
+  const k = 3;
+  const s = table.map((t) => (((t.points ?? 0) + 1.35 * k) / ((t.played ?? 0) + k)) * STRENGTH_MULT[strength[t.name] ?? 3]);
+  const r = rng(seed);
+  const game = (a, b, aHome) => {
+    const ha = aHome ? 1.12 : 1 / 1.12;
+    const pa = (s[a] * ha) / (s[a] * ha + s[b]);
+    const draw = 0.25 * (1 - Math.abs(pa - 0.5) * 1.2);
+    const x = r();
+    return x < pa * (1 - draw) ? 3 : x < pa * (1 - draw) + draw ? 1 : 0;
+  };
+  const posCount = Array(n).fill(0);
+  let ptsSum = 0;
+  for (let it = 0; it < runs; it++) {
+    const pts = table.map((t) => t.points ?? 0);
+    for (let rd = roundsPlayed + 1; rd <= rounds; rd++) {
+      const pool = teams.map((_, i) => i);
+      const pairs = [];
+      const f = ours[rd];
+      if (f && idx.has(f.opp)) {
+        const o = idx.get(f.opp);
+        pairs.push(f.home ? [me, o] : [o, me]);
+        pool.splice(pool.indexOf(me), 1); pool.splice(pool.indexOf(o), 1);
+      }
+      for (let i = pool.length - 1; i > 0; i--) { const j = Math.floor(r() * (i + 1)); [pool[i], pool[j]] = [pool[j], pool[i]]; }
+      for (let i = 0; i + 1 < pool.length; i += 2) pairs.push([pool[i], pool[i + 1]]);
+      for (const [a, b] of pairs) {
+        const g = game(a, b, true);
+        pts[a] += g; pts[b] += g === 3 ? 0 : g === 1 ? 1 : 3;
+      }
+    }
+    const tie = pts.map((p, i) => p + r() * 0.5); // remis punktowy: losowo (bramek nie symulujemy)
+    const pos = tie.filter((v) => v > tie[me]).length;
+    posCount[pos]++;
+    ptsSum += pts[me];
+  }
+  const pct = posCount.map((c) => (100 * c) / runs);
+  const likely = pct.indexOf(Math.max(...pct)) + 1;
+  const sumP = (a, b) => pct.slice(a - 1, b).reduce((x, y) => x + y, 0);
+  return { pct, likely, avgPoints: ptsSum / runs, promo: sumP(1, 1), safe: sumP(2, 4), playoff: sumP(5, Math.min(6, n)), down: n > 6 ? sumP(7, n) : 0, roundsLeft: Math.max(0, rounds - roundsPlayed) };
+}

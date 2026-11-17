@@ -73,3 +73,19 @@ test('tabela kadry: kolumny rozpoznane po zgodności, zmiany tylko pewne', () =>
   assert.equal(ch(3).form ?? ch(3).tsi, undefined); // u Tomeo forma jest sklejona w „44206” — nie zgadujemy i nie nadpisujemy nią TSI
   assert.equal(detectKind(squad), 'squadTable');
 });
+
+test('prognoza końca sezonu: rozkład miejsc sumuje się do 100, mocny lider częściej 1.', async () => {
+  const { seasonProjection } = await import('../web/v2/parsers.js');
+  const table = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'Ja'].map((name, i) => ({ name, played: 7, points: name === 'A' ? 19 : name === 'Ja' ? 12 : 8 - (i % 3) }));
+  const p = seasonProjection({ table, team: 'Ja', roundsPlayed: 7, runs: 2000 });
+  assert.ok(Math.abs(p.pct.reduce((a, b) => a + b, 0) - 100) < 1e-6);
+  assert.equal(p.roundsLeft, 7);
+  assert.ok(p.avgPoints > 12 && p.avgPoints < 12 + 21);
+  const a = seasonProjection({ table, team: 'A', roundsPlayed: 7, runs: 2000 });
+  assert.ok(a.promo > p.promo);
+  // Twoja ocena siły rywali zmienia prognozę na starcie sezonu
+  const zero = table.map((t) => ({ ...t, played: 0, points: 0 }));
+  const weak = seasonProjection({ table: zero, team: 'Ja', roundsPlayed: 0, runs: 2000, strength: { Ja: 5 } });
+  const even = seasonProjection({ table: zero, team: 'Ja', roundsPlayed: 0, runs: 2000 });
+  assert.ok(weak.promo > even.promo * 1.5);
+});

@@ -3,6 +3,7 @@
 
 import { ensureMatchIds, matchId, SKILLS } from './logic.js';
 import { nameId } from '../csv-import.js';
+import { setWeights } from '../optimizer.js';
 
 export const DEFAULT_SETTINGS = {
   teamName: 'Portowcy FC',
@@ -31,6 +32,21 @@ export const DEFAULT_FINANCE = {
   weeks: 16,
 };
 
+// Liga VI.139 (sezon 84) — skład ligi ze zrzutu strony ligi z 5.11.2026. Poprawisz w Więcej → Liga.
+export const DEFAULT_LEAGUE = {
+  name: 'VI.139',
+  seasonStart: '2026-11-15T09:00:00',
+  rounds: 14,
+  teams: ['Kondony Padura', 'FC Jastrzębie F-16 Krzesiny', 'A.C. Termopile', 'Lomboo', 'LKS Boleszevia', 'F.C Bazylika', 'Strzałka Chojny Łódź', 'Portowcy FC'],
+  table: null, // [{name, played, points}] ze zrzutu albo wpisane
+  tableAt: null,
+};
+
+// Znany zakup: Lubor Zicha, 7.11.2026, 1 224 000 zł (zakończone oferty w HT).
+const DEFAULT_TRANSFERS = [
+  { id: 't-zicha', type: 'buy', name: 'Lubor Zícha', playerId: null, price: 1224000, date: '2026-11-07', note: 'ze zrzutu „Oferty → zakończone”' },
+];
+
 export const state = {
   squad: { players: [] },
   youth: { players: [] },
@@ -40,6 +56,8 @@ export const state = {
   candidates: [],
   settings: { ...DEFAULT_SETTINGS },
   lineups: {},
+  league: null,
+  transfers: [],
   history: [],
   online: true,
   loaded: false,
@@ -72,7 +90,7 @@ async function load(name, fallback) {
 }
 
 export async function loadAll() {
-  const [squad, youth, club, matches, finance, candidates, settings, lineups] = await Promise.all([
+  const [squad, youth, club, matches, finance, candidates, settings, lineups, league, transfers] = await Promise.all([
     load('squad', { players: [] }),
     load('youth-squad', { players: [] }),
     load('club', null),
@@ -81,6 +99,8 @@ export async function loadAll() {
     load('v2-candidates', null),
     load('v2-settings', null),
     load('v2-lineups', {}),
+    load('v2-league', null),
+    load('v2-transfers', null),
   ]);
   state.squad = squad;
   state.youth = youth;
@@ -93,6 +113,9 @@ export async function loadAll() {
     state.settings.trainingCfg = { intensity: club.training.intensity ?? 100, coachLevel: club.training.coachLevel ?? 4, assistants: club.training.assistantsLevel ?? 10, staminaShare: club.training.stamina ?? 20 };
   }
   state.lineups = lineups ?? {};
+  state.league = { ...DEFAULT_LEAGUE, ...(league ?? {}) };
+  state.transfers = transfers ?? DEFAULT_TRANSFERS;
+  if (state.settings.weights) setWeights(state.settings.weights);
   // kandydaci z v1 (localStorage tej samej strony) — przenosimy raz na serwer
   state.candidates = candidates ?? migrateV1Candidates();
   if (!candidates && state.candidates.length) save('candidates');
@@ -132,6 +155,8 @@ const STORE_FILE = {
   candidates: ['v2-candidates', () => state.candidates],
   settings: ['v2-settings', () => state.settings],
   lineups: ['v2-lineups', () => state.lineups],
+  league: ['v2-league', () => state.league],
+  transfers: ['v2-transfers', () => state.transfers],
 };
 
 export async function save(what) {

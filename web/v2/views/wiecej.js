@@ -4,20 +4,27 @@ import { html, raw, icon, str, toast, openSheet, closeSheet, chip, md, fmt1, con
 import { state, save, players, teamName, mergeImportedSquad, applyTheme } from '../store.js';
 import {
   byDate, matchState, matchId, opponentOf, resultFor, fmtDate, relTime, fullName, SLOT_NAME, SLOT_SHORT, SKILLS,
-  trainingPlan, compareTrainingTypes, skillChanges, rosterChanges, nextTrainingUpdate,
+  trainingPlan, compareTrainingTypes, skillChanges, rosterChanges, nextTrainingUpdate, minutesPlan,
 } from '../logic.js';
-import { currentLineup, aiContext, startEdit } from '../compute.js';
+import { currentLineup, aiContext, startEdit, calib } from '../compute.js';
+import { ocrLines } from '../ocr.js';
+import * as liga from './liga.js';
+import * as analizy from './analizy.js';
+import { parseMatchRatings, whichSide, nameScore } from '../parsers.js';
 import { saveResult, upsertMatch, deleteMatch } from '../actions.js';
 import { importText } from '../../csv-import.js';
 import { TRAINING_TYPES } from '../../optimizer.js';
 import { LEVEL_PL } from '../../ht-ratings.js';
+import { notifySection, bindNotify } from './powiadomienia.js';
 
 const PAGES = {
   mecze: { title: 'Mecze', icon: 'calendar', sub: 'wyniki, rywale, oceny', render: matches },
+  liga: { title: 'Liga', icon: 'trophy', sub: 'tabela, terminarz, ile do awansu', render: (el, ctx) => liga.render(el, ctx) },
   trening: { title: 'Trening', icon: 'training', sub: 'kto trenuje i kiedy awans', render: training },
   ai: { title: 'Doradca AI', icon: 'spark', sub: 'plan i odpowiedzi na pytania', render: advisor },
   import: { title: 'Import danych', icon: 'upload', sub: 'CSV z Hattricka', render: importPage },
   historia: { title: 'Historia kadry', icon: 'history', sub: 'zmiany między importami', render: historyPage },
+  analizy: { title: 'Analizy', icon: 'chart', sub: 'mapy umiejętności i ocen, ekonomia, wagi, raport', render: (el, ctx) => analizy.render(el, ctx) },
   ustawienia: { title: 'Ustawienia', icon: 'settings', sub: 'drużyna, wygląd', render: settingsPage },
 };
 
@@ -28,8 +35,7 @@ export async function render(el, ctx) {
     return page.render(el, ctx);
   }
   ctx.app.setHeader({ title: 'Więcej', subtitle: teamName() });
-  el.innerHTML = str(html`<section class="card tight"><ul class="list">${Object.entries(PAGES).map(([k, p]) => html`<li><a class="item" href="#/wiecej/${k}"><span class="lead-ic">${icon(p.icon)}</span><span class="item-main"><span class="item-title">${p.title}</span><span class="item-sub">${p.sub}</span></span>${icon('chevron', 'chev')}</a></li>`)}
-    <li><a class="item" href="/"><span class="lead-ic">${icon('old')}</span><span class="item-main"><span class="item-title">Stara wersja</span><span class="item-sub">Gaffer v1 — wszystkie dawne zakładki</span></span>${icon('chevron', 'chev')}</a></li></ul></section>
+  el.innerHTML = str(html`<section class="card tight"><ul class="list">${Object.entries(PAGES).map(([k, p]) => html`<li><a class="item" href="#/wiecej/${k}"><span class="lead-ic">${icon(p.icon)}</span><span class="item-main"><span class="item-title">${p.title}</span><span class="item-sub">${p.sub}</span></span>${icon('chevron', 'chev')}</a></li>`)}</ul></section>
     <p class="hint" style="text-align:center">Gaffer v2 · dane na Pi · ${state.online ? 'połączono' : 'offline'}</p>`);
 }
 
@@ -112,11 +118,13 @@ function matchDetail(el, id, app) {
     ${lineup ? html`<h3 class="section-title">Zapisany skład (${lineup.formation})</h3><section class="card" style="padding:4px 16px">${lineup.playerIds.map((pid, i) => html`<div class="hist-row"><span class="muted">${SLOT_SHORT[lineup.slots[i]]}</span><span>${byId.get(pid) ? fullName(byId.get(pid)) : '—'}${pid === lineup.captainId ? ' (K)' : ''}</span></div>`)}</section>` : ''}
     <h3 class="section-title">Oceny rywala</h3>
     <section class="card">
-      <p class="small muted" style="margin-bottom:10px">Przepisz oceny sektorów rywala z raportu jego ostatniego meczu (Hattrick → drużyna rywala → mecze → raport). Na ich podstawie Skład pokaże szanse i najlepszą taktykę.</p>
+      <p class="small muted" style="margin-bottom:10px">Oceny sektorów rywala z raportu jego ostatniego meczu (Hattrick → drużyna rywala → mecze → raport, sekcja „Oceny szczegółowe”). Na ich podstawie Skład pokaże szanse i najlepszą taktykę.</p>
+      <label class="btn ghost block" style="margin-bottom:12px">${icon('camera')} Wczytaj ze zrzutu raportu<input type="file" accept="image/*" hidden id="rivShot"></label>
       ${SECT.map(([k, l]) => html`<label class="field"><span>${l}</span><select data-r="${k}">${ratingOptions(rv[k])}</select></label>`)}
       <label class="toggle"><span>Rywal grał ten mecz u siebie</span><input type="checkbox" id="wasHome" ${rv.wasHome ? 'checked' : ''}></label>
       <button class="btn primary block" id="saveRiv">Zapisz oceny</button>
     </section>
+    ${ourSection(m, lineup)}
     <div class="row-btns"><button class="btn ghost" id="edit">Edytuj mecz</button>${st !== 'done' ? html`<a class="btn ghost" href="#/sklad" id="toLu">Ustaw skład</a>` : ''}<button class="btn danger" id="del">${icon('trash')} Usuń</button></div>`);
 
   el.querySelector('#saveRes').onclick = async () => {
@@ -129,12 +137,83 @@ function matchDetail(el, id, app) {
     el.querySelectorAll('[data-r]').forEach((s) => { if (s.value) rival[s.dataset.r] = Number(s.value); });
     try { await upsertMatch({ ...m, rival }); toast('Oceny rywala zapisane', 'good'); app.render(); } catch (e) { toast(e.message, 'bad'); }
   };
+  el.querySelector('#rivShot').onchange = (e) => readReport(e.target.files[0], 'rival', m, (rep, side) => {
+    const r = rep[side].ratings;
+    el.querySelectorAll('[data-r]').forEach((sel) => { if (r[sel.dataset.r] != null) sel.value = String(r[sel.dataset.r]); });
+    el.querySelector('#wasHome').checked = side === 'home';
+    toast(`Wczytano ${Object.keys(r).length} z 7 ocen — sprawdź i zapisz`, Object.keys(r).length === 7 ? 'good' : 'bad');
+  });
+  el.querySelector('#ourShot')?.addEventListener('change', (e) => readReport(e.target.files[0], 'ours', m, async (rep, side) => {
+    const ours = rep[side].ratings;
+    const other = side === 'home' ? 'away' : 'home';
+    const patch = { ...m, ours, oursFromShot: true };
+    // wynik z raportu: strona „my” → nasze gole
+    if (rep.score && (m.homeGoals == null || m.awayGoals == null)) {
+      const usG = rep.score[side], themG = rep.score[other];
+      const home = opponentOf(m, team).home;
+      patch.homeGoals = home ? usG : themG; patch.awayGoals = home ? themG : usG; patch.status = 'FINISHED';
+    }
+    try { await upsertMatch(patch); toast('Oceny z raportu zapisane', 'good'); app.render(); } catch (err) { toast(err.message, 'bad'); }
+  }));
+  el.querySelector('#saveOurs')?.addEventListener('click', async () => {
+    const ours = {};
+    el.querySelectorAll('[data-o]').forEach((s2) => { if (s2.value) ours[s2.dataset.o] = Number(s2.value); });
+    try { await upsertMatch({ ...m, ours }); toast('Zapisano', 'good'); app.render(); } catch (err) { toast(err.message, 'bad'); }
+  });
   el.querySelector('#edit').onclick = () => editMatch(m, app);
   el.querySelector('#toLu')?.addEventListener('click', () => startEdit(m));
   el.querySelector('#del').onclick = async () => {
     if (!(await confirmSheet(`Usunąć mecz z ${o.name}?`, 'Usuń'))) return;
     try { await deleteMatch(m); app.go('#/wiecej/mecze'); } catch (e) { toast(e.message, 'bad'); }
   };
+}
+
+// Nasze oceny z raportu po meczu + porównanie z prognozą zapisaną razem ze składem.
+const SECT_ALL = [['midfield', 'Pomoc'], ['defRight', 'Prawa obrona'], ['defCentral', 'Środek obrony'], ['defLeft', 'Lewa obrona'], ['attRight', 'Prawy atak'], ['attCentral', 'Środkowy atak'], ['attLeft', 'Lewy atak']];
+function ourSection(m, lineup) {
+  if (matchState(m) === 'upcoming') return '';
+  const ours = m.ours ?? {};
+  const pred = lineup?.predicted;
+  const c = calib();
+  const has = Object.keys(ours).length > 0;
+  return html`<h3 class="section-title">Nasze oceny z raportu</h3><section class="card">
+    <p class="small muted" style="margin-bottom:10px">Po meczu wczytaj raport (sekcja „Oceny szczegółowe”). ${pred ? 'Gaffer porówna je ze swoją prognozą i z czasem sam poprawi prognozy.' : 'Na ten mecz nie było zapisanego składu w v2, więc nie ma prognozy do porównania — oceny i tak się przydadzą.'}</p>
+    <label class="btn ghost block" style="margin-bottom:12px">${icon('camera')} Wczytaj ze zrzutu raportu<input type="file" accept="image/*" hidden id="ourShot"></label>
+    ${has && pred ? html`<div class="hist-row"><b>Sektor</b><span class="tnum"><b>prognoza → raport</b></span></div>${SECT_ALL.map(([k, l]) => {
+      const d = ours[k] != null && pred[k] ? ours[k] - pred[k] : null;
+      return html`<div class="hist-row"><span>${l}</span><span class="tnum">${pred[k] ? fmt2(pred[k]) : '—'} → <b>${ours[k] != null ? fmt2(ours[k]) : '—'}</b>${d != null ? html` <small class="${Math.abs(d) < 0.5 ? 'muted' : d > 0 ? 'good' : 'bad'}">${d > 0 ? '+' : ''}${fmt2(d)}</small>` : ''}</span></div>`;
+    })}` : ''}
+    <details style="margin-top:10px"><summary class="small">Wpisz albo popraw ręcznie</summary>
+      ${SECT_ALL.map(([k, l]) => html`<label class="field"><span>${l}</span><select data-o="${k}">${ratingOptions(ours[k])}</select></label>`)}
+      <button class="btn primary block" id="saveOurs">Zapisz nasze oceny</button>
+    </details>
+    <p class="hint">${c.n >= 2 ? `Korekta prognoz z ${c.n} meczów: ${SECT_ALL.filter(([k]) => Math.abs(c.factor[k] - 1) >= 0.03).map(([k, l]) => `${l.toLowerCase()} ×${fmt2(c.factor[k])}`).join(', ') || 'prognozy trafiają, bez poprawek'}.` : `Korekta prognoz włączy się po 2 meczach z prognozą i raportem (teraz: ${c.n}).`}</p>
+  </section>`;
+}
+
+const fmt2 = (n) => (Number.isFinite(n) ? n.toFixed(2).replace('.', ',') : '—');
+
+// Zrzut raportu → oceny jednej drużyny. purpose: 'rival' (rywal w jego meczu) albo 'ours'.
+async function readReport(file, purpose, m, done) {
+  if (!file) return;
+  const team = teamName();
+  const rivalName = opponentOf(m, team).name;
+  const body = openSheet(html`<p class="lead" id="st">Czytam raport… (ok. 10 s)</p><div id="pick"></div>`, { title: 'Raport meczu' });
+  try {
+    const rep = parseMatchRatings(await ocrLines(file));
+    if (!rep.found) { body.querySelector('#st').textContent = 'Nie znalazłem ocen sektorów. Zrób zrzut sekcji „Oceny szczegółowe” z raportu meczu.'; return; }
+    let side = purpose === 'ours' ? whichSide(rep, team) : (() => {
+      const h = nameScore(rep.home.name, rivalName), a = nameScore(rep.away.name, rivalName);
+      return Math.max(h, a) >= 0.7 ? (h >= a ? 'home' : 'away') : null;
+    })();
+    const finish = (sd) => { closeSheet(); done(rep, sd); };
+    if (side) return finish(side);
+    body.querySelector('#st').textContent = `Odczytałem ${rep.found} z 7 sektorów. Która drużyna to ${purpose === 'ours' ? 'Twoja' : rivalName}?`;
+    body.querySelector('#pick').innerHTML = str(html`<div class="row-btns"><button class="btn primary" data-side="home">${rep.home.name || 'gospodarze'} (lewa kolumna)</button><button class="btn primary" data-side="away">${rep.away.name || 'goście'} (prawa kolumna)</button></div>`);
+    body.querySelectorAll('[data-side]').forEach((b) => (b.onclick = () => finish(b.dataset.side)));
+  } catch (e) {
+    body.querySelector('#st').textContent = e.message;
+  }
 }
 
 // ---------------- trening ----------------
@@ -149,6 +228,7 @@ function training(el, { app }) {
   const missing = plan.filter((x) => x.slot && x.coverage === 'none');
   const cmp = compareTrainingTypes(players(), slots, cfg).slice(0, 5);
   const nu = nextTrainingUpdate();
+  const mp = minutesPlan({ players: players(), matches: state.matches, lineups: state.lineups, settings: s });
   el.innerHTML = str(html`
     <section class="card">
       <div class="card-head"><h2>${s.trainingType}</h2><span class="small muted">aktualizacja ${fmtDate(nu, true)}</span></div>
@@ -160,6 +240,7 @@ function training(el, { app }) {
       </div>
       <button class="btn primary block" id="saveT">Zapisz</button>
     </section>
+    ${minutesSection(mp, s.trainingType)}
     <h3 class="section-title">Trenują teraz (skład ${lu?.name ?? '—'})</h3>
     <section class="card tight">${trained.length ? html`<ul class="list">${trained.map((x) => html`<li class="item" style="cursor:default">
       <span class="avatar pos-${x.slot}" style="width:40px;height:40px;border-radius:12px;font-size:12px">${SLOT_SHORT[x.slot]}</span>
@@ -174,6 +255,22 @@ function training(el, { app }) {
     s.trainingCfg = { ...s.trainingCfg, intensity: Number(el.querySelector('#ti').value) || 100, coachLevel: Number(el.querySelector('#tc').value) || 4, assistants: Number(el.querySelector('#ta').value) || 0 };
     try { await save('settings'); toast('Zapisano', 'good'); app.render(); } catch (e) { toast(e.message, 'bad'); }
   };
+}
+
+// Kto w tym tygodniu treningowym dostanie minuty na trenowanej pozycji (wg zapisanych składów).
+function minutesSection(mp, type) {
+  const core = mp.rows.filter((r) => r.core || r.status === 'ok');
+  const bench = mp.rows.filter((r) => !r.core && r.status !== 'ok');
+  const miss = core.filter((r) => r.status === 'missing');
+  const ok = core.filter((r) => r.status === 'ok');
+  const row = (r) => html`<div class="check ${r.status === 'ok' ? 'ok' : r.status === 'missing' && r.core ? 'no' : 'maybe'}"><span class="dot">${icon(r.status === 'ok' ? 'check' : r.status === 'missing' && r.core ? 'close' : 'info')}</span><span>${fullName(r.player)} <small class="muted">${SLOT_SHORT[r.slot]}</small>${r.status === 'ok' ? html`<small>gra ${fmtDate(r.match.date)} — trening zaliczony</small>` : r.hint ? html`<small>${r.hint}</small>` : ''}</span></div>`;
+  return html`<h3 class="section-title">Minuty do ${fmtDate(mp.to.toISOString(), true)}</h3><section class="card">
+    <div class="card-head"><h2>${ok.length} trenuje</h2>${miss.length ? chip(`${miss.length} z XI bez minut`, 'warn') : chip('XI trenuje', 'good')}</div>
+    <p class="small muted">Mecze w tym tygodniu: ${mp.matches.length ? mp.matches.map((m) => `${fmtDate(m.date)} ${opponentOf(m, teamName()).name}${state.lineups[matchId(m)] ? '' : ' (skład niezapisany)'}`).join(', ') : 'brak'}.</p>
+    ${core.map(row)}
+    ${bench.length ? html`<details style="margin-top:8px"><summary class="small">Rezerwowi bez minut (${bench.length}) — trenują tylko, jeśli zagrają</summary>${bench.map(row)}</details>` : ''}
+    <p class="hint">${type}: liczą się minuty na trenowanej pozycji we wszystkich meczach tygodnia (liga, puchar, sparing), łącznie do 90. Sparing to dobry sposób, żeby potrenowali rezerwowi i juniorzy.</p>
+  </section>`;
 }
 
 // ---------------- doradca AI ----------------
@@ -289,7 +386,8 @@ function historyPage(el) {
 
 // ---------------- ustawienia ----------------
 
-function settingsPage(el, { app }) {
+async function settingsPage(el, { app }) {
+  const notify = await notifySection();
   const s = state.settings;
   const SPIRIT = Array.from({ length: 11 }, (_, i) => (i === 5 ? '5 — spokojni' : String(i)));
   const CONF = Array.from({ length: 10 }, (_, i) => (i === 9 ? '9 — niemożliwie przesadzona' : String(i)));
@@ -305,7 +403,9 @@ function settingsPage(el, { app }) {
       <label class="field"><span>Wygląd</span><select id="th">${[['auto', 'Jak w telefonie'], ['dark', 'Ciemny'], ['light', 'Jasny']].map(([v, l]) => html`<option value="${v}" ${s.theme === v ? 'selected' : ''}>${l}</option>`)}</select></label>
       <button class="btn primary block" id="ok">Zapisz</button>
     </section>
+    ${notify}
     <section class="card"><h2>Dane</h2><p class="lead" style="margin-top:6px">Wszystko zapisuje się na Pi (folder data/). Przed każdą zmianą robię kopię poprzedniej wersji (20 ostatnich w data/backup/).</p></section>`);
+  bindNotify(el);
   el.querySelector('#th').onchange = (e) => { s.theme = e.target.value; applyTheme(); };
   el.querySelector('#ok').onclick = async () => {
     s.teamName = el.querySelector('#tn').value.trim() || s.teamName;

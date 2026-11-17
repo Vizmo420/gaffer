@@ -9,7 +9,7 @@ const strip = (s) => String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').re
 async function shrink(file) {
   try {
     const bmp = await createImageBitmap(file);
-    if (bmp.width <= 1600) return file;
+    if (bmp.width <= 1600 || bmp.width > bmp.height) return file; // poziome = tabela z komputera, zostawiamy ostrość
     const scale = 1290 / bmp.width;
     const c = new OffscreenCanvas(Math.round(bmp.width * scale), Math.round(bmp.height * scale));
     c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
@@ -19,9 +19,18 @@ async function shrink(file) {
   }
 }
 
+// Surowe linie OCR jednego zrzutu (do raportu meczu, ligi, tabeli kadry).
+export async function ocrLines(file) {
+  const r = await fetch('/api/ocr', { method: 'POST', body: await shrink(file) });
+  const res = await r.json().catch(() => ({ error: 'OCR działa tylko na Pi' }));
+  if (!r.ok || res.error) throw new Error(res.error || `OCR: HTTP ${r.status}`);
+  return res.lines || [];
+}
+
 export async function readScreens(files, onProgress = () => {}) {
   const cards = [];
   const notes = [];
+  const tables = [];
   let i = 0;
   for (const f of files) {
     i++;
@@ -31,11 +40,11 @@ export async function readScreens(files, onProgress = () => {}) {
     const res = await r.json().catch(() => ({ error: 'OCR działa tylko na Pi' }));
     if (!r.ok || res.error) throw new Error(res.error || `OCR: HTTP ${r.status}`);
     const parsed = parseScreen(res.lines || []);
-    if (parsed.kind === 'table') notes.push(`Zrzut ${i}: to tabela kadry — tego nie odczytam wiarygodnie (OCR skleja liczby). Użyj importu CSV albo zrzutów kart zawodników.`);
+    if (parsed.kind === 'table') { notes.push(`Zrzut ${i}: to tabela kadry — użyj Kadra → aparat → „Tabela kadry”.`); tables.push(res.lines || []); }
     else if (!parsed.cards.length) notes.push(`Zrzut ${i}: nie znalazłem karty zawodnika.`);
     cards.push(...parsed.cards);
   }
-  return { cards: mergeCards(cards), notes };
+  return { cards: mergeCards(cards), notes, tables };
 }
 
 export { missingFields };

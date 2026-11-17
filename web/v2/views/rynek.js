@@ -1,30 +1,34 @@
 // Rynek: kandydaci do kupna (ze zrzutów), kogo sprzedać, finanse z prognozą.
 
-import { html, raw, icon, str, toast, openSheet, closeSheet, chip, cashChart, fmt1, signed, int, confirmSheet } from '../ui.js';
+import { html, raw, icon, str, toast, openSheet, closeSheet, chip, cashChart, fmt1, signed, int, confirmSheet, sparkline } from '../ui.js';
 import { state, save, players, weeklyWages } from '../store.js';
-import { SKILLS, SLOT_NAME, SLOT_SHORT, fullName, sellAdvice, wageAfterTransfer, WAGE_MODES, parseDeadline, relTime, fmtMoney, fmtDate } from '../logic.js';
+import { SKILLS, SLOT_NAME, SLOT_SHORT, fullName, sellAdvice, wageAfterTransfer, WAGE_MODES, parseDeadline, relTime, fmtMoney, fmtDate, transferSummary, squadValueSeries } from '../logic.js';
 import { bestXI, opts, forecast, spendable } from '../compute.js';
 import { scoreCandidate } from '../../planner.js';
 import { nameId } from '../../csv-import.js';
 import { readScreens, missingFields, properName } from '../ocr.js';
-import { buyCandidate } from '../actions.js';
+import { buyCandidate, addTransfer } from '../actions.js';
 import { openPlayer } from './kadra.js';
 
 const ui = { tab: 'kandydaci', showClosed: false };
 
 export async function render(el, { parts, app }) {
-  if (['kandydaci', 'sprzedaz', 'finanse'].includes(parts[0])) ui.tab = parts[0];
+  if (['kandydaci', 'sprzedaz', 'finanse', 'transfery'].includes(parts[0])) ui.tab = parts[0];
   app.setHeader({
     title: 'Rynek',
     subtitle: `gotówka ${fmtMoney(state.finance.cash)} · można wydać ${fmtMoney(spendable())}`,
     actions: ui.tab === 'kandydaci' ? html`<button class="icon-btn" id="addCand" aria-label="Dodaj kandydata">${icon('plus')}</button>` : '',
   });
-  const seg = html`<div class="seg"><button data-tab="kandydaci" class="${ui.tab === 'kandydaci' ? 'on' : ''}">Kupno</button><button data-tab="sprzedaz" class="${ui.tab === 'sprzedaz' ? 'on' : ''}">Sprzedaż</button><button data-tab="finanse" class="${ui.tab === 'finanse' ? 'on' : ''}">Finanse</button></div>`;
-  const content = ui.tab === 'sprzedaz' ? selling() : ui.tab === 'finanse' ? finance() : buying();
+  const seg = html`<div class="seg"><button data-tab="kandydaci" class="${ui.tab === 'kandydaci' ? 'on' : ''}">Kupno</button><button data-tab="sprzedaz" class="${ui.tab === 'sprzedaz' ? 'on' : ''}">Sprzedaż</button><button data-tab="transfery" class="${ui.tab === 'transfery' ? 'on' : ''}">Transfery</button><button data-tab="finanse" class="${ui.tab === 'finanse' ? 'on' : ''}">Finanse</button></div>`;
+  const content = ui.tab === 'sprzedaz' ? selling() : ui.tab === 'finanse' ? finance() : ui.tab === 'transfery' ? transfers() : buying();
   el.innerHTML = str(html`${seg}${content}`);
   el.querySelectorAll('[data-tab]').forEach((b) => (b.onclick = () => app.go(`#/rynek/${b.dataset.tab}`)));
   if (ui.tab === 'kandydaci') bindBuying(el, app);
   if (ui.tab === 'finanse') bindFinance(el, app);
+  if (ui.tab === 'transfery') {
+    el.querySelector('#addT').onclick = () => editTransfer(null, app);
+    el.querySelectorAll('[data-t]').forEach((b) => (b.onclick = () => editTransfer(state.transfers.find((t) => t.id === b.dataset.t), app)));
+  }
   if (ui.tab === 'sprzedaz') el.querySelectorAll('[data-pid]').forEach((b) => (b.onclick = () => openPlayer(players().find((p) => p.id === Number(b.dataset.pid)), app)));
 }
 
@@ -188,6 +192,59 @@ function selling() {
       <span class="item-main"><span class="item-title">${fullName(s.player)} ${chip(lbl[s.verdict], tone[s.verdict])}</span>
       <span class="item-sub">${s.reasons.length ? s.reasons.join(' · ') : `rezerwowy: ${SLOT_NAME[s.slot]?.toLowerCase()}`}</span></span>
       <span class="item-end"><b>${int(s.player.salary)}</b><small>zł/tydz.</small></span></button></li>`)}</ul></section>`;
+}
+
+// ---------------- transfery ----------------
+
+function transfers() {
+  const sum = transferSummary(state.transfers);
+  const val = squadValueSeries(state.history);
+  const list = [...state.transfers].sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  return html`<section class="card"><div class="stats">
+      <div class="stat"><b>${short(sum.spent)}</b><span>wydane (${sum.buys})</span></div>
+      <div class="stat"><b>${short(sum.earned)}</b><span>sprzedaż (${sum.sells})</span></div>
+      <div class="stat"><b class="${sum.balance < 0 ? 'bad' : 'good'}">${short(sum.balance)}</b><span>bilans</span></div></div>
+      ${sum.unknown ? html`<p class="hint">${icon('warn')} ${sum.unknown} bez ceny — dotknij, żeby uzupełnić.</p>` : ''}
+    </section>
+    ${val.length >= 2 ? html`<section class="card"><div class="card-head"><h2>Wartość kadry</h2><span class="small muted">${fmtDate(val[0].at)} → ${fmtDate(val.at(-1).at)}</span></div>
+      <div class="hist-row"><span>Suma TSI</span><span>${sparkline(val.map((v) => v.tsi), { w: 110, h: 26 })} <b class="tnum">${short(val.at(-1).tsi)}</b></span></div>
+      <div class="hist-row"><span>Pensje / tydz.</span><span>${sparkline(val.map((v) => v.wages), { w: 110, h: 26 })} <b class="tnum">${short(val.at(-1).wages)}</b></span></div>
+      <div class="hist-row"><span>Zawodników</span><span>${sparkline(val.map((v) => v.n), { w: 110, h: 26 })} <b class="tnum">${val.at(-1).n}</b></span></div>
+      <p class="hint">Z kolejnych importów kadry. TSI to wartość wg HT, nie cena rynkowa.</p></section>` : ''}
+    <button class="btn primary block" id="addT" style="margin-bottom:12px">${icon('plus')} Dopisz transfer</button>
+    ${list.length ? html`<section class="card tight"><ul class="list">${list.map((t) => html`<li><button class="item" data-t="${t.id}">
+      <span class="lead-ic" style="font-weight:800;color:var(--${t.type === 'buy' ? 'bad' : 'good'})">${t.type === 'buy' ? '−' : '+'}</span>
+      <span class="item-main"><span class="item-title">${t.name}</span><span class="item-sub">${t.type === 'buy' ? 'kupiony' : 'sprzedany'} ${fmtDate(t.date)}${t.age ? ` · ${t.age} l.` : ''}${t.tsi ? ` · TSI ${int(t.tsi)}` : ''}</span></span>
+      <span class="item-end">${t.price != null ? html`<b>${short(t.price)}</b>` : chip('cena?', 'warn')}</span></button></li>`)}</ul></section>`
+    : html`<div class="empty">${icon('market')}<p>Kupno („Kupiony” przy kandydacie) i sprzedaż („Odszedł” w karcie zawodnika) zapiszą się tu same.</p></div>`}`;
+}
+
+function editTransfer(t, app) {
+  const isNew = !t;
+  t = t ?? { type: 'buy', name: '', price: null, date: new Date().toISOString().slice(0, 10) };
+  const body = openSheet(html`
+    <div class="seg"><button data-ty="buy" class="${t.type === 'buy' ? 'on' : ''}">Kupno</button><button data-ty="sell" class="${t.type === 'sell' ? 'on' : ''}">Sprzedaż</button></div>
+    <label class="field"><span>Zawodnik</span><input id="nm" value="${t.name}" autocomplete="off"></label>
+    <div class="grid2"><label class="field"><span>Cena (zł)</span><input id="pr" type="number" inputmode="numeric" value="${t.price ?? ''}"></label><label class="field"><span>Data</span><input id="dt" type="date" value="${t.date}"></label></div>
+    <button class="btn primary block" id="ok">Zapisz</button>
+    ${isNew ? '' : html`<button class="btn danger block" style="margin-top:8px" id="del">${icon('trash')} Usuń wpis</button>`}`, { title: isNew ? 'Nowy transfer' : t.name });
+  let type = t.type;
+  body.querySelectorAll('[data-ty]').forEach((b) => (b.onclick = () => { type = b.dataset.ty; body.querySelectorAll('[data-ty]').forEach((x) => x.classList.toggle('on', x === b)); }));
+  body.querySelector('#ok').onclick = async () => {
+    const name = body.querySelector('#nm').value.trim();
+    if (!name) return toast('Wpisz zawodnika', 'bad');
+    const pr = body.querySelector('#pr').value;
+    const patch = { type, name, price: pr === '' ? null : Number(pr), date: body.querySelector('#dt').value || t.date };
+    try {
+      if (isNew) await addTransfer(patch);
+      else { Object.assign(t, patch); await save('transfers'); }
+      closeSheet(); app.render();
+    } catch (e) { toast(e.message, 'bad'); }
+  };
+  body.querySelector('#del')?.addEventListener('click', async () => {
+    state.transfers = state.transfers.filter((x) => x !== t);
+    try { await save('transfers'); closeSheet(); app.render(); } catch (e) { toast(e.message, 'bad'); }
+  });
 }
 
 // ---------------- finanse ----------------

@@ -3,7 +3,7 @@
 import { FORMATIONS } from '../optimizer.js';
 import { predictRatings, simulateMatch, relocateMidfield, hatStats, TACTICS } from '../ht-ratings.js';
 import { forecastCash, safeSpend } from '../planner.js';
-import { pickLineup, squadOpts, nextMatch, opponentOf, matchId, fullName, SLOT_NAME, SKILLS, youthVerdicts, sellAdvice, fmtMoney } from './logic.js';
+import { pickLineup, squadOpts, nextMatch, opponentOf, matchId, fullName, SLOT_NAME, SKILLS, youthVerdicts, sellAdvice, fmtMoney, calibration, applyCalibration } from './logic.js';
 import { state, players, teamName, savedLineup, weeklyWages } from './store.js';
 
 // Stan edycji składu (w pamięci, do zapisu). Klucz: id meczu.
@@ -37,8 +37,9 @@ export function currentLineup() {
 
 // Najlepszy skład bez blokad (do analiz: sprzedaż, akademia, trening).
 let bestCache = { key: '', value: null };
+export const invalidateBest = () => { bestCache = { key: '', value: null }; };
 export function bestXI() {
-  const key = JSON.stringify([players().length, players().map((p) => p.id + ':' + p.form + ':' + p.injuryLevel + ':' + p.yellowCards).join(), state.settings.formation, state.settings.useLoyalty]);
+  const key = JSON.stringify([players().length, players().map((p) => p.id + ':' + p.form + ':' + p.injuryLevel + ':' + p.yellowCards).join(), state.settings.formation, state.settings.useLoyalty, state.settings.weights ?? null]);
   if (bestCache.key !== key) bestCache = { key, value: pickLineup(players(), { formation: state.settings.formation, opts: opts() }) };
   return bestCache.value;
 }
@@ -61,16 +62,21 @@ export function predictionCtx(m, tactic = edit.tactic) {
   };
 }
 
+// Korekta z porównania prognoz z ocenami z raportów (po co najmniej 2 meczach).
+export const calib = () => calibration(state.matches, state.lineups);
+const corrected = (r) => (state.settings.calibrate === false ? r : applyCalibration(r, calib()));
+
 export function prediction(lineup, m) {
   if (!lineup) return null;
   const lu = lineup.result.slots.map((s) => ({ slot: s.slot, player: s.player }));
-  const ours = predictRatings(lu, predictionCtx(m));
+  const raw = predictRatings(lu, predictionCtx(m));
+  const ours = corrected(raw);
   const opp = rivalRatings(m);
-  const out = { ours, hs: hatStats(ours), opp, sim: null, tactics: [] };
+  const out = { ours, raw, hs: hatStats(ours), opp, sim: null, tactics: [] };
   if (opp) {
     out.sim = simulateMatch(ours, opp, { tactic: edit.tactic, runs: 4000 });
     out.tactics = Object.keys(TACTICS).map((t) => {
-      const r = predictRatings(lu, predictionCtx(m, t));
+      const r = corrected(predictRatings(lu, predictionCtx(m, t)));
       const s = simulateMatch(r, opp, { tactic: t, runs: 4000 });
       return { t, label: TACTICS[t], s, pts: (3 * s.win + s.draw) / 100 };
     }).sort((a, b) => b.pts - a.pts);

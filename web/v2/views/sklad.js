@@ -122,7 +122,9 @@ export async function render(el, { app }) {
   el.querySelector('#loy').onchange = async (e) => { state.settings.useLoyalty = e.target.checked; await save('settings').catch(() => {}); app.render(); };
   el.querySelector('#trb').onchange = async (e) => { state.settings.trainingBonus = e.target.checked; await save('settings').catch(() => {}); app.render(); };
   el.querySelector('#saveLu')?.addEventListener('click', async () => {
-    state.lineups[matchId(m)] = { formation: lu.name, slots: lu.slots, playerIds: xiIds, captainId: edit.captainId, setPiecesId: edit.setPiecesId, tactic: edit.tactic, savedAt: new Date().toISOString() };
+    // prognoza bez korekty — po meczu porównamy ją z ocenami z raportu
+    const predicted = prediction(lu, m)?.raw ?? null;
+    state.lineups[matchId(m)] = { formation: lu.name, slots: lu.slots, playerIds: xiIds, captainId: edit.captainId, setPiecesId: edit.setPiecesId, tactic: edit.tactic, predicted, savedAt: new Date().toISOString() };
     if (edit.formation === 'auto') edit.formation = lu.name;
     lu.result.slots.forEach((s, i) => { if (s.player) edit.locks[i] = s.player.id; });
     try { await save('lineups'); toast('Skład zapisany', 'good'); app.render(); } catch (e) { toast(e.message, 'bad'); }

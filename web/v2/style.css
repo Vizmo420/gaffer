@@ -433,3 +433,21 @@ table.data td:first-child { white-space: normal; }
 .alt-row { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-top: 1px solid var(--line); cursor: pointer; background: none; border-left: 0; border-right: 0; border-bottom: 0; width: 100%; text-align: left; }
 .alt-row:first-of-type { border-top: 0; }
 .alt-row .diff { font-weight: 750; font-variant-numeric: tabular-nums; }
+
+/* ---------- analizy: mapy, suwaki, słupki ---------- */
+.map { border-collapse: collapse; width: 100%; font-size: 13px; font-variant-numeric: tabular-nums; }
+.map th, .map td { padding: 6px 4px; text-align: center; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.map th button { all: unset; cursor: pointer; font-weight: 700; color: var(--muted); font-size: 12px; }
+.map th button.on { color: var(--text); text-decoration: underline; }
+.map .nm { text-align: left; position: sticky; left: 0; background: var(--surface); padding-left: 12px; max-width: 120px; overflow: hidden; text-overflow: ellipsis; }
+.map td.c { color: #fff; font-weight: 600; min-width: 26px; }
+.map td.c small { display: block; font-size: 10px; opacity: 0.8; font-weight: 500; }
+.map td.s1 { background: var(--s1); } .map td.s2 { background: var(--s2); } .map td.s3 { background: var(--s3); }
+.map td.s4 { background: var(--s4); } .map td.s5 { background: var(--s5); }
+.map td.top { font-weight: 800; box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.55); }
+.map td.c.top:not([class*=" s"]) { color: var(--text); }
+.range { display: grid; grid-template-columns: 110px 1fr 44px; align-items: center; gap: 10px; padding: 6px 0; font-size: 14px; }
+.range input { width: 100%; accent-color: var(--accent); }
+.range output { text-align: right; font-variant-numeric: tabular-nums; }
+.bar { display: block; height: 10px; background: var(--line); border-radius: 5px; overflow: hidden; }
+.bar i { display: block; height: 100%; background: var(--accent); border-radius: 5px; }

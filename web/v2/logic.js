@@ -325,6 +325,11 @@ export function buildAlerts({ squad, matches = [], candidates = [], settings = {
     const age = (now - new Date(squad.fetchedAt)) / DAY;
     if (age > 7) out.push({ tone: 'muted', text: `Dane kadry sprzed ${Math.floor(age)} dni — zaimportuj świeże`, route: '#/wiecej/import' });
   }
+  if (settings.trainingType && players.length) {
+    const mp = minutesPlan({ players, matches, lineups: savedLineups, settings, now });
+    const miss = mp.rows.filter((r) => r.status === 'missing' && r.core);
+    if (miss.length && (mp.to - now) / HOUR <= 72) out.push({ tone: 'warn', text: `Trening w piątek: ${miss.length === 1 ? fullName(miss[0].player) + ' nie ma' : miss.length + ' zawodników z XI nie ma'} minut na trenowanej pozycji`, route: '#/wiecej/trening' });
+  }
   if (forecast && forecast.minCash < 0) out.push({ tone: 'bad', text: `Prognoza: kasa spadnie pod zero w ${forecast.minWeek}. tygodniu`, route: '#/rynek/finanse' });
   return out;
 }
@@ -355,4 +360,100 @@ export function relTime(iso, now = new Date()) {
   const days = Math.round(a / 24);
   const txt = a < 24 ? `${Math.round(a)} h` : days === 1 ? '1 dzień' : `${days} dni`;
   return h >= 0 ? `za ${txt}` : `${txt} temu`;
+}
+
+// ---------------- minuty pod trening (HT: trenuje tylko ten, kto zagra na trenowanej pozycji) ----------------
+
+// Plan na bieżący tydzień treningowy: kto powinien trenować, czy ma zaplanowany mecz na trenowanej pozycji,
+// i gdzie go wstawić, jeśli nie. Mecze w tygodniu = od ostatniej aktualizacji (piątek 02:30) do następnej.
+export function minutesPlan({ players, matches = [], lineups = {}, settings = {}, now = new Date() }) {
+  const type = settings.trainingType;
+  const next = nextTrainingUpdate(now);
+  const prev = new Date(next.getTime() - 7 * DAY);
+  const week = matches.filter((m) => { const t = new Date(m.date); return t > prev && t <= next; }).sort(byDate);
+  const opts = squadOpts(settings);
+  const plays = new Map(); // id → [{match, slot, trained}]
+  for (const m of week) {
+    const lu = lineups[matchId(m)];
+    if (!lu) continue;
+    lu.playerIds.forEach((id, i) => {
+      if (id == null) return;
+      const slot = lu.slots[i];
+      if (!plays.has(id)) plays.set(id, []);
+      plays.get(id).push({ match: m, slot, trained: coverageFor(slot, type) !== 'none' });
+    });
+  }
+  const unsaved = week.filter((m) => !lineups[matchId(m)] && matchState(m, now) !== 'done');
+  // „ważni” = najlepsza XI na trenowanej pozycji; reszta to rezerwowi (trenują tylko, jeśli dostaną mecz)
+  const xi = pickLineup(players, { formation: settings.formation || 'auto', opts });
+  const core = new Set((xi?.result.slots ?? []).filter((s) => s.player && coverageFor(s.slot, type) !== 'none').map((s) => s.player.id));
+  const rows = [];
+  for (const p of players) {
+    const best = bestSlots(p, opts, 1)[0];
+    const naturally = best && coverageFor(best.slot, type) === 'full';
+    const g = plays.get(p.id) ?? [];
+    const trainedIn = g.find((x) => x.trained);
+    if (!naturally && !trainedIn) continue;
+    const injured = p.injuryLevel > 0;
+    let status, hint = null;
+    if (trainedIn) status = 'ok';
+    else if (injured) { status = 'injured'; hint = 'kontuzja — w tym tygodniu i tak nie potrenuje'; }
+    else {
+      status = 'missing';
+      const where = unsaved.find((m) => !/lig[ai]/i.test(m.competition ?? '')) ?? unsaved[0];
+      const offPos = g[0];
+      hint = where ? `wstaw go na ${SLOT_NAME[best.slot].toLowerCase()} w meczu ${fmtDate(where.date)}`
+        : offPos ? `gra jako ${SLOT_NAME[offPos.slot].toLowerCase()} — tam ${type?.toLowerCase()} go nie trenuje`
+        : week.length ? 'nie ma go w zapisanych składach tego tygodnia — wstaw go albo dodaj sparing przed piątkiem'
+        : 'brak meczu w tym tygodniu — rozważ sparing (mecz towarzyski) przed piątkiem';
+    }
+    rows.push({ player: p, slot: trainedIn?.slot ?? best.slot, status, core: core.has(p.id), match: trainedIn?.match ?? null, hint });
+  }
+  const order = { missing: 0, injured: 1, ok: 2 };
+  rows.sort((a, b) => order[a.status] - order[b.status] || Number(b.core) - Number(a.core));
+  return { from: prev, to: next, matches: week, unsaved, rows };
+}
+
+// ---------------- prognoza a rzeczywistość ----------------
+
+const SECTOR_KEYS = ['midfield', 'defRight', 'defCentral', 'defLeft', 'attRight', 'attCentral', 'attLeft'];
+
+// Średni stosunek ocen z raportu do prognozy Gaffera, per sektor (mecze z zapisanym składem i wpisanymi ocenami).
+export function calibration(matches = [], lineups = {}) {
+  const sums = Object.fromEntries(SECTOR_KEYS.map((k) => [k, []]));
+  const used = [];
+  for (const m of matches) {
+    const pred = lineups[matchId(m)]?.predicted;
+    if (!pred || !m.ours) continue;
+    let any = false;
+    for (const k of SECTOR_KEYS) {
+      if (pred[k] > 0 && m.ours[k] > 0) { sums[k].push(m.ours[k] / pred[k]); any = true; }
+    }
+    if (any) used.push(m);
+  }
+  const factor = Object.fromEntries(SECTOR_KEYS.map((k) => {
+    const v = sums[k];
+    const avg = v.length ? v.reduce((a, b) => a + b, 0) / v.length : 1;
+    return [k, Math.min(1.3, Math.max(0.7, avg))];
+  }));
+  return { n: used.length, factor, matches: used };
+}
+
+export function applyCalibration(ratings, cal, min = 2) {
+  if (!cal || cal.n < min) return ratings;
+  return Object.fromEntries(Object.entries(ratings).map(([k, v]) => [k, cal.factor[k] ? v * cal.factor[k] : v]));
+}
+
+// ---------------- transfery ----------------
+
+export function transferSummary(transfers = []) {
+  const buys = transfers.filter((t) => t.type === 'buy');
+  const sells = transfers.filter((t) => t.type === 'sell');
+  const sum = (a) => a.reduce((s, t) => s + (t.price || 0), 0);
+  return { spent: sum(buys), earned: sum(sells), balance: sum(sells) - sum(buys), buys: buys.length, sells: sells.length, unknown: transfers.filter((t) => t.price == null).length };
+}
+
+// Wartość kadry w czasie: suma TSI i pensji z każdej migawki historii.
+export function squadValueSeries(history = []) {
+  return history.map((h) => ({ at: h.at, tsi: h.players.reduce((a, p) => a + (p.tsi || 0), 0), wages: h.players.reduce((a, p) => a + (p.salary || 0), 0), n: h.players.length }));
 }

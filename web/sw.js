@@ -1,45 +1,12 @@
-// Prosty service worker: network-first dla powłoki (świeże po zmianach kodu),
-// cache jako fallback offline. Dane (/data/*) zawsze z sieci, bez cache.
-const CACHE = 'gaffer-v5';
-const SHELL = [
-  './',
-  './index.html',
-  './style.css',
-  './app.js',
-  './optimizer.js',
-  './training-calc.js',
-  './sample-squad.js',
-  './csv-import.js',
-  './ht-ratings.js',
-  './planner.js',
-  './screen-parse.js',
-  './manifest.webmanifest',
-];
-
-self.addEventListener('install', (e) => {
-  self.skipWaiting();
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).catch(() => {}));
-});
-
+// Gaffer v1 został zastąpiony przez v2 (/v2/). Ten service worker tylko sprząta po v1:
+// kasuje jej pamięć podręczną, wyrejestrowuje się i przenosi otwarte okna do v2.
+self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', (e) => {
-  e.waitUntil(
-    caches.keys().then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k)))),
-  );
-  self.clients.claim();
-});
-
-self.addEventListener('fetch', (e) => {
-  const url = new URL(e.request.url);
-  if (e.request.method !== 'GET' || url.origin !== location.origin) return;
-  if (url.pathname.startsWith('/data/')) return; // dane zawsze świeże
-
-  e.respondWith(
-    fetch(e.request)
-      .then((res) => {
-        const copy = res.clone();
-        caches.open(CACHE).then((c) => c.put(e.request, copy)).catch(() => {});
-        return res;
-      })
-      .catch(() => caches.match(e.request).then((r) => r || caches.match('./index.html'))),
-  );
+  e.waitUntil((async () => {
+    const keys = await caches.keys();
+    await Promise.all(keys.filter((k) => k.startsWith('gaffer-v')).map((k) => caches.delete(k)));
+    await self.registration.unregister();
+    const wins = await self.clients.matchAll({ type: 'window' });
+    for (const w of wins) if (!new URL(w.url).pathname.startsWith('/v2/')) w.navigate('/v2/');
+  })());
 });

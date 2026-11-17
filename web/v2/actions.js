@@ -42,12 +42,23 @@ export async function buyCandidate(c) {
   c.status = 'bought';
   await save('squad');
   await save('candidates');
+  await addTransfer({ type: 'buy', name: c.name, playerId: p.id, price: c.price ?? null, tsi: c.tsi ?? null, age: c.age ?? null, wage: p.salary });
   return p;
 }
 
-export async function removePlayer(p) {
+// Odejście z kadry; przy sprzedaży zapisujemy cenę w dzienniku transferów (i opcjonalnie dopisujemy do gotówki).
+export async function removePlayer(p, { soldFor = null, addToCash = false } = {}) {
   state.squad.players = players().filter((x) => x.id !== p.id);
   await save('squad');
+  if (soldFor != null) {
+    await addTransfer({ type: 'sell', name: `${p.firstName ?? ''} ${p.lastName ?? ''}`.trim(), playerId: p.id, price: soldFor, tsi: p.tsi ?? null, age: p.age ?? null, wage: p.salary ?? null });
+    if (addToCash && soldFor) { state.finance.cash += soldFor; state.finance.at = new Date().toISOString().slice(0, 10); await save('finance'); }
+  }
+}
+
+export async function addTransfer(t) {
+  state.transfers = [{ id: `t-${Date.now().toString(36)}`, date: new Date().toISOString().slice(0, 10), ...t }, ...state.transfers];
+  await save('transfers');
 }
 
 export async function updatePlayer(p, patch) {

@@ -5,7 +5,9 @@ import { state, save, players, teamName, playerFromCard } from '../store.js';
 import { SKILLS, SLOT_SHORT, SLOT_NAME, fullName, bestSlots, playerHistory, sellAdvice, youthVerdicts, YOUTH_VERDICT, trainingPlan, fmtMoney, fmtDate } from '../logic.js';
 import { bestXI, opts, currentLineup } from '../compute.js';
 import { specialtyName, isSuspended } from '../../optimizer.js';
-import { readScreens, findPlayer, CARD_FIELDS } from '../ocr.js';
+import { findPlayer, CARD_FIELDS, ocrLines } from '../ocr.js';
+import { parseScreen, mergeCards } from '../../screen-parse.js';
+import { detectKind, parseSquadTable } from '../parsers.js';
 import { updatePlayer, removePlayer } from '../actions.js';
 
 const ui = { tab: 'seniorzy', sort: 'pos', q: '' };
@@ -180,9 +182,19 @@ export function openPlayer(p, app) {
   body.querySelector('#tl').onchange = (e) => patch({ transferListed: e.target.checked });
   body.querySelector('#yc').onchange = (e) => patch({ yellowCards: Number(e.target.value) });
   body.querySelector('#inj').onchange = (e) => patch({ injuryLevel: Number(e.target.value) });
-  body.querySelector('#gone').onclick = async () => {
-    if (!(await confirmSheet(`Usunąć ${fullName(p)} z kadry (sprzedany, zwolniony)? Zostanie w historii importów.`, 'Usuń z kadry'))) return openPlayer(p, app);
-    try { await removePlayer(p); toast(`${fullName(p)} usunięty z kadry`); app?.render(); } catch (e) { toast(e.message, 'bad'); }
+  body.querySelector('#gone').onclick = () => {
+    const b2 = openSheet(html`<p class="lead">${fullName(p)} zniknie z kadry (zostanie w historii importów).</p>
+      <label class="field"><span>Sprzedany za (zł) — puste, jeśli zwolniony</span><input id="sold" type="number" inputmode="numeric"></label>
+      <label class="toggle"><span>Dodaj kwotę do gotówki</span><input type="checkbox" id="cash" checked></label>
+      <div class="row-btns"><button class="btn ghost" id="no">Anuluj</button><button class="btn danger" id="yes">Usuń z kadry</button></div>`, { title: 'Odszedł' });
+    b2.querySelector('#no').onclick = () => openPlayer(p, app);
+    b2.querySelector('#yes').onclick = async () => {
+      const v = b2.querySelector('#sold').value;
+      try {
+        await removePlayer(p, { soldFor: v === '' ? null : Number(v), addToCash: b2.querySelector('#cash').checked });
+        closeSheet(); toast(`${fullName(p)} usunięty z kadry`); app?.render();
+      } catch (e) { toast(e.message, 'bad'); }
+    };
   };
   body.querySelector('#editSkills').onclick = () => editNumbers(p, app);
 }
@@ -200,18 +212,31 @@ function editNumbers(p, app) {
   };
 }
 
-// Zrzut karty własnego zawodnika: aktualizacja istniejącego albo dodanie nowego (np. po wygranej aukcji).
+// Zrzut karty własnego zawodnika (aktualizacja albo nowy po aukcji) albo zrzut tabeli kadry (cała drużyna naraz).
 function screenshotFlow(app) {
-  const body = openSheet(html`<p class="lead">Wybierz 1–3 zrzuty karty zawodnika z aplikacji Hattricka (umiejętności i strona z pensją/TSI). Znany zawodnik zostanie zaktualizowany, nowy — dodany do kadry.</p>
+  const body = openSheet(html`<p class="lead">Wybierz zrzuty z Hattricka:</p>
+    <ul class="small" style="margin:0 0 12px 18px"><li><b>tabela kadry</b> (Zawodnicy → widok tabeli, najlepiej poziomo) — zaktualizuje wszystkich naraz,</li><li><b>karta zawodnika</b> (umiejętności i strona z pensją/TSI) — zaktualizuje jednego albo doda nowego.</li></ul>
     <label class="btn primary block">${icon('camera')} Wybierz zrzuty<input type="file" accept="image/*" multiple hidden id="f"></label>
-    <p class="hint" id="st"></p><div id="res"></div>`, { title: 'Zawodnik ze zrzutu' });
+    <p class="hint" id="st"></p><div id="res"></div>`, { title: 'Kadra ze zrzutu' });
   body.querySelector('#f').onchange = async (e) => {
     const files = [...e.target.files];
     if (!files.length) return;
     const st = body.querySelector('#st');
     try {
-      const { cards, notes } = await readScreens(files, (m) => (st.textContent = m));
+      const raw = [], tables = [], notes = [];
+      for (const [i, f] of files.entries()) {
+        st.textContent = `Czytam zrzut ${i + 1} z ${files.length}…`;
+        const lines = await ocrLines(f);
+        if (detectKind(lines) === 'squadTable') tables.push(lines);
+        else {
+          const parsed = parseScreen(lines);
+          if (!parsed.cards.length) notes.push(`Zrzut ${i + 1}: nie rozpoznałem ani tabeli, ani karty zawodnika.`);
+          raw.push(...parsed.cards);
+        }
+      }
       st.textContent = notes.join(' ');
+      if (tables.length) return tableResult(tables, body, app);
+      const cards = mergeCards(raw);
       if (!cards.length) return;
       body.querySelector('#res').innerHTML = str(html`${cards.map((c, i) => {
         const p = findPlayer(c, players());
@@ -240,4 +265,39 @@ function screenshotFlow(app) {
   const sheet = document.querySelector('#sheet');
   const obs = new MutationObserver(() => { if (!sheet.classList.contains('open')) { obs.disconnect(); app.render(); } });
   obs.observe(sheet, { attributes: true, attributeFilter: ['class'] });
+}
+
+const FIELD_PL = { form: 'forma', stamina: 'kondycja', experience: 'doświadczenie', leadership: 'przywództwo', loyalty: 'lojalność', tsi: 'TSI', salary: 'pensja', age: 'wiek', ageDays: 'dni' };
+const fieldName = (k) => FIELD_PL[k] ?? (SKILLS.find(([s]) => s === k)?.[1] ?? k).toLowerCase();
+
+// Wynik odczytu tabeli: zmiany do zatwierdzenia. Pewne (forma, TSI, skok umiejętności o 1) zaznaczone; większe skoki do sprawdzenia.
+function tableResult(tables, body, app) {
+  const byId = new Map();
+  for (const lines of tables) for (const r of parseSquadTable(lines, players()).rows) {
+    const prev = byId.get(r.player.id);
+    if (!prev || r.changes.length > prev.changes.length) byId.set(r.player.id, r);
+  }
+  const rows = [...byId.values()];
+  const missing = players().filter((p) => !byId.has(p.id));
+  const changes = rows.flatMap((r) => r.changes.map((c) => ({ ...c, player: r.player })));
+  if (!rows.length) { body.querySelector('#st').textContent = 'Nie dopasowałem nazwisk z tabeli do kadry. Zrób zrzut poziomo, żeby nazwiska i liczby były czytelne.'; return; }
+  body.querySelector('#res').innerHTML = str(html`<section class="card">
+    <div class="card-head"><h2>${rows.length} z ${players().length} zawodników</h2>${chip(`${changes.length} zmian`, changes.length ? 'accent' : '')}</div>
+    ${missing.length ? html`<p class="hint">Nie ma w tabeli: ${missing.map(fullName).join(', ')}.</p>` : ''}
+    ${changes.length ? changes.map((c, i) => html`<label class="toggle"><span>${fullName(c.player)}: ${fieldName(c.field)} ${c.from ?? '?'} → <b>${c.to}</b>${c.sure ? '' : html` ${chip('do sprawdzenia', 'warn')}`}</span><input type="checkbox" data-ch="${i}" ${c.sure ? 'checked' : ''}></label>`) : html`<p class="muted">Wszystko zgadza się z danymi w Gafferze.</p>`}
+    ${changes.length ? html`<button class="btn primary block" id="apply" style="margin-top:10px">Zapisz zaznaczone</button>` : ''}
+    <p class="hint">Gaffer bierze tylko komórki, które OCR odczytał pewnie. Skok umiejętności o więcej niż 1 to zwykle pomyłka odczytu, dlatego nie jest zaznaczony.</p>
+  </section>`);
+  body.querySelector('#apply')?.addEventListener('click', async () => {
+    let n = 0;
+    body.querySelectorAll('[data-ch]').forEach((cb) => {
+      if (!cb.checked) return;
+      const c = changes[Number(cb.dataset.ch)];
+      c.player[c.field] = c.to;
+      if (c.field === 'age' || c.field === 'ageDays') c.player.ageYears = Number((c.player.age + (c.player.ageDays ?? 0) / 112).toFixed(2));
+      n++;
+    });
+    if (rows.length >= players().length * 0.8) state.squad.fetchedAt = new Date().toISOString();
+    try { await save('squad'); toast(`Zapisano ${n} zmian`, 'good'); closeSheet(); app.render(); } catch (e) { toast(e.message, 'bad'); }
+  });
 }

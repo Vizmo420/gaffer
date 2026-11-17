@@ -5,6 +5,7 @@ import { state, teamName, savedLineup, players } from '../store.js';
 import { nextMatch, pendingResults, opponentOf, buildAlerts, preMatchChecklist, fmtDate, relTime, fmtMoney, skillChanges, rosterChanges, fullName, matchId } from '../logic.js';
 import { currentLineup, prediction, forecast, spendable, startEdit, edit } from '../compute.js';
 import { saveResult } from '../actions.js';
+import { leagueStatus } from './liga.js';
 
 export async function render(el, { app }) {
   const team = teamName();
@@ -46,6 +47,16 @@ export async function render(el, { app }) {
       <div class="score-input"><input class="input" type="number" inputmode="numeric" min="0" max="30" aria-label="Gole ${team}" placeholder="–" data-us><span>:</span><input class="input" type="number" inputmode="numeric" min="0" max="30" aria-label="Gole ${o.name}" placeholder="–" data-them></div>
       <div class="row-btns"><button class="btn primary" data-save>Zapisz wynik</button><a class="btn ghost" href="#/wiecej/mecze/${encodeURIComponent(matchId(pm))}">Więcej</a></div>
     </section>`);
+  }
+
+  // --- liga ---
+  const ls = leagueStatus();
+  if (ls) {
+    const tone = { promo: 'good', safe: '', playoff: 'warn', down: 'bad' }[ls.zone];
+    parts.push(html`<a class="card" href="#/wiecej/liga" style="display:block;text-decoration:none"><div class="card-head"><h2>Liga ${state.league.name}</h2><span class="chip ${tone}">${ls.pos}. miejsce</span></div>
+      <p class="small muted">${ls.points} pkt · ${ls.pos === 1 ? `przewaga ${ls.lead} pkt` : `${ls.toFirst} pkt do 1. miejsca`} · ${ls.left} kolejek do końca</p></a>`);
+  } else {
+    parts.push(html`<a class="alert info" href="#/wiecej/liga">${icon('info')}<span>Liga: wczytaj zrzut tabeli, a pokażę miejsce i ile brakuje do awansu</span></a>`);
   }
 
   // --- alerty ---

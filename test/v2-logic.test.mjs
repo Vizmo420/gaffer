@@ -4,6 +4,7 @@ import {
   matchState, nextMatch, pendingResults, opponentOf, resultFor, nextTrainingUpdate, trainingUpdatesBetween,
   skillChanges, wageAfterTransfer, pickLineup, alternativesFor, sellAdvice, youthVerdicts, preMatchChecklist,
   buildAlerts, parseDeadline, coverageFor, trainingPlan, ensureMatchIds, relTime,
+  minutesPlan, calibration, applyCalibration, transferSummary, squadValueSeries, matchId,
 } from '../web/v2/logic.js';
 import { SAMPLE_SQUAD, SAMPLE_YOUTH } from '../web/sample-squad.js';
 
@@ -99,4 +100,42 @@ test('termin aukcji z HT i czas względny', () => {
   assert.equal(parseDeadline('12.11.2026 10:03').getHours(), 10);
   assert.equal(relTime('2026-11-13T20:00:00', now), 'za 1 dzień');
   assert.equal(relTime('2026-11-12T19:30:00', now), 'przed chwilą');
+});
+
+test('plan minut: kto trenuje w tym tygodniu, a komu brakuje meczu na trenowanej pozycji', () => {
+  const ps = SAMPLE_SQUAD.players;
+  const settings = { trainingType: 'Podania', formation: '3-5-2' };
+  const ms = ensureMatchIds([
+    { date: '2026-11-12T21:00:00', homeTeamName: T, awayTeamName: 'Liga X', competition: 'Liga' },
+    { date: '2026-11-11T20:00:00', homeTeamName: 'Puchar Y', awayTeamName: T, competition: 'Puchar Polski' },
+  ]);
+  const xi = pickLineup(ps, { formation: '3-5-2' });
+  const lineups = { [matchId(ms[0])]: { slots: xi.slots, playerIds: xi.result.slots.map((s) => s.player?.id ?? null) } };
+  const plan = minutesPlan({ players: ps, matches: ms, lineups, settings, now });
+  assert.equal(plan.matches.length, 2);
+  const ok = plan.rows.filter((r) => r.status === 'ok');
+  assert.ok(ok.length >= 5);
+  assert.ok(ok.every((r) => ['IM', 'WI', 'FW'].includes(r.slot)));
+  // bez zapisanego składu nikt nie ma „ok”, a wskazówka kieruje do meczu bez składu
+  const none = minutesPlan({ players: ps, matches: ms, lineups: {}, settings, now });
+  assert.equal(none.rows.some((r) => r.status === 'ok'), false);
+  assert.match(none.rows[0].hint, /w meczu/);
+});
+
+test('kalibracja prognozy z ocen po meczu', () => {
+  const ms = ensureMatchIds([{ date: '2026-11-01T15:00:00', homeTeamName: T, awayTeamName: 'A', ours: { midfield: 6, defLeft: 5 } }, { date: '2026-11-08T15:00:00', homeTeamName: T, awayTeamName: 'B', ours: { midfield: 9 } }]);
+  const lineups = { [matchId(ms[0])]: { predicted: { midfield: 5, defLeft: 5 } }, [matchId(ms[1])]: { predicted: { midfield: 9 } } };
+  const c = calibration(ms, lineups);
+  assert.equal(c.n, 2);
+  assert.ok(Math.abs(c.factor.midfield - 1.1) < 1e-9);
+  assert.equal(c.factor.attLeft, 1);
+  assert.equal(applyCalibration({ midfield: 10 }, c).midfield.toFixed(2), '11.00');
+  assert.equal(applyCalibration({ midfield: 10 }, { ...c, n: 1 }).midfield, 10); // z 1 meczu jeszcze nie poprawiamy
+});
+
+test('dziennik transferów i wartość kadry', () => {
+  const s = transferSummary([{ type: 'buy', price: 1224000 }, { type: 'sell', price: 300000 }, { type: 'buy', price: null }]);
+  assert.deepEqual([s.spent, s.earned, s.balance, s.unknown], [1224000, 300000, -924000, 1]);
+  const v = squadValueSeries([{ at: 'a', players: [{ tsi: 10, salary: 2 }, { tsi: 5, salary: 1 }] }]);
+  assert.deepEqual(v[0], { at: 'a', tsi: 15, wages: 3, n: 2 });
 });

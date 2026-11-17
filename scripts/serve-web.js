@@ -10,6 +10,7 @@ import { execFile } from 'node:child_process';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { readConfig as ntfyConfig, send as ntfySend } from './notify.mjs';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const WEB_DIR = path.join(ROOT, 'web');
@@ -40,7 +41,9 @@ const server = http.createServer((req, res) => {
   if (url === '/api/ocr') return handleOcr(req, res);
   if (url.startsWith('/api/store/')) return handleStore(req, res, url.slice('/api/store/'.length));
   if (url === '/api/history') return handleHistory(req, res);
-  if (url === '/v2') { res.writeHead(301, { Location: '/v2/' }); return res.end(); }
+  if (url === '/api/notify' || url === '/api/notify/test') return handleNotify(req, res, url.endsWith('/test'));
+  // v1 wyłączona (17.11.2026): strona główna prowadzi do v2. Pliki v1 zostają, bo v2 korzysta z jej silnika (optimizer.js itd.).
+  if (url === '/v2' || url === '/' || url === '/index.html') { res.writeHead(url === '/v2' ? 301 : 302, { Location: '/v2/' }); return res.end(); }
 
   // /data/* -> katalog data/ (tylko pliki .json, tylko odczyt)
   if (url.startsWith('/data/')) {
@@ -165,10 +168,25 @@ async function handleOcr(req, res) {
   }
 }
 
+// ------------------------- powiadomienia (ntfy) -------------------------
+// Temat ntfy jest w ~/.config/gaffer/ntfy.env; wysyłkę co 10 min robi scripts/notify.mjs (gaffer-notify.timer).
+async function handleNotify(req, res, test) {
+  const json = (code, obj) => send(res, code, JSON.stringify(obj), MIME['.json']);
+  const cfg = ntfyConfig();
+  if (!test) return json(200, { enabled: !!cfg.topic, topic: cfg.topic, server: cfg.server });
+  if (req.method !== 'POST') return json(405, { error: 'tylko POST' });
+  try {
+    await ntfySend(cfg, { title: 'Gaffer: test', message: 'Powiadomienia działają. Dotknij, żeby otworzyć Gaffera.', tags: ['white_check_mark'] });
+    return json(200, { ok: true });
+  } catch (err) {
+    return json(502, { error: err.message });
+  }
+}
+
 // ------------------------- zapis danych (v2) -------------------------
 // Tylko nazwy z listy; każdy zapis robi kopię poprzedniej wersji w data/backup/ (20 ostatnich na plik).
 // Zapis kadry seniorów dodatkowo odkłada migawkę dnia do data/history/ (historia postępów).
-const STORE_NAMES = new Set(['squad', 'youth-squad', 'matches', 'club', 'v2-finance', 'v2-candidates', 'v2-settings', 'v2-lineups']);
+const STORE_NAMES = new Set(['squad', 'youth-squad', 'matches', 'club', 'v2-finance', 'v2-candidates', 'v2-settings', 'v2-lineups', 'v2-league', 'v2-transfers']);
 const BACKUP_DIR = path.join(DATA_DIR, 'backup');
 const HISTORY_DIR = path.join(DATA_DIR, 'history');
 const BACKUP_KEEP = 20;

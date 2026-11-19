@@ -25,7 +25,10 @@ export function nameScore(a, b) {
   if (!x || !y) return 0;
   if (x === y) return 1;
   if (x.length >= 5 && y.length >= 5 && (x.includes(y) || y.includes(x))) return 0.9;
-  return 1 - lev(x, y) / Math.max(x.length, y.length);
+  const full = 1 - lev(x, y) / Math.max(x.length, y.length);
+  // nazwa ucięta na telefonie („Strzałka Chojny Ł…”): porównaj z początkiem pełnej nazwy
+  if (x.length >= 8 && y.length > x.length) return Math.max(full, 0.95 * (1 - lev(x, y.slice(0, x.length)) / x.length));
+  return full;
 }
 
 export function bestName(text, names, min = 0.75) {
@@ -141,6 +144,14 @@ export function parseLeague(lines, knownTeams = []) {
   const table = [];
   const fixtures = [];
   let date = null;
+  // nagłówek tabeli („Drużyna … Pkt”): wyznacza prawą krawędź tabeli i kolejność kolumn
+  const head = rs.find((r) => /druzyna/.test(strip(r.text)) && /pkt|#/.test(strip(r.text)) && r.items.length >= 2);
+  const headAfter = head ? letters(strip(head.text).split('druzyna').pop()) : '';
+  const pointsFirst = headAfter.startsWith('pkt'); // telefon: „Pkt ± Z”
+  const hasPoints = !head || /pkt/.test(headAfter); // telefon, druga zakładka „R P + -” nie ma punktów
+  const rightEdge = head ? Math.max(...head.items.map((i) => i.x + i.w / 2)) + 40 : maxX * 0.62;
+  const roundM = strip(rs.map((r) => r.text).join(' ')).match(/runda\s*(\d{1,2})/);
+  const round = roundM ? Number(roundM[1]) : null;
   for (const r of rs) {
     const dm = r.text.match(/(\d{2})\.(\d{2})\.(\d{4})(?:\s+(\d{1,2}):(\d{2}))?/);
     // terminarz: „Drużyna A - Drużyna B [2 - 1]” — w obrębie jednego napisu OCR (wiersz łączy też menu i panele boczne)
@@ -162,16 +173,19 @@ export function parseLeague(lines, knownTeams = []) {
     if (isFixture) continue;
     if (dm) date = `${dm[3]}-${dm[2]}-${dm[1]}T${(dm[4] ?? '00').padStart(2, '0')}:${dm[5] ?? '00'}:00`;
     // tabela: pozycja, nazwa, liczby — tylko lewa część strony (po prawej bywa lista drużyn z innych sekcji)
-    const left = r.items.filter((i) => i.x < maxX * 0.62);
+    if (head && r.y <= head.y) continue;
+    const left = r.items.filter((i) => i.x < rightEdge);
     const nameItem = left.find((i) => letters(i.text).length >= 3 && (knownTeams.length ? bestName(i.text.replace(/^\W*\d+\s*/, ''), knownTeams) : true));
     if (!nameItem) continue;
     const name = knownTeams.length ? bestName(nameItem.text.replace(/^\W*\d+\s*/, ''), knownTeams) : nameItem.text.replace(/^\W*\d+\s*/, '').trim();
     const before = left.filter((i) => i.x < nameItem.x && isInt(i.text));
     const nums = left.filter((i) => i.x > nameItem.x && /^[\d\s+−-]+$/.test(i.text.trim()))
-      .flatMap((i) => i.text.trim().split(/\s+/)).filter(isInt).map(Number);
+      .flatMap((i) => i.text.trim().replace(/−/g, '-').split(/\s+/)).filter((s) => /^-?\d{1,3}$/.test(s)).map(Number);
     if (!before.length && nums.length < 2) continue; // bez pozycji i bez liczb to nie wiersz tabeli
     if (table.some((t) => t.name === name)) continue;
-    table.push({ pos: before.length ? Number(before.at(-1).text) : null, name, played: nums.length >= 2 ? nums[0] : null, points: nums.length >= 2 ? nums.at(-1) : null });
+    const ok = nums.length >= 2 && hasPoints;
+    const points = ok ? (pointsFirst ? nums[0] : nums.at(-1)) : null;
+    table.push({ pos: before.length ? Number(before.at(-1).text) : null, name, played: ok ? (pointsFirst ? round : nums[0]) : null, points: points != null && points >= 0 ? points : null });
   }
   table.forEach((t, i) => { t.pos = i + 1; });
   return { table, fixtures };

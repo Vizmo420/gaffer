@@ -104,3 +104,12 @@ test('raport: taktyka obu drużyn, kartki i kontuzje z opisu, średnia z kilku r
   const mood = parseMood([ln(10, 'Nastrój: spokojni'), ln(40, 'Pewność siebie'), { x: 700, y: 40, w: 200, h: 24, text: 'przyzwoita' }], { spirit: { spokojni: 5 } });
   assert.deepEqual(mood, { spiritWord: 'spokojni', confWord: 'przyzwoita', spirit: 5, confidence: null });
 });
+
+test('liga z telefonu: zakładka „Pkt ± Z” daje punkty, „R P + -” nie udaje punktów', () => {
+  const lg = parseLeague(L('league-mobile'), TEAMS);
+  assert.equal(lg.table.length, 8);
+  assert.deepEqual(lg.table.map((t) => t.points), [3, 3, 3, 1, 1, 0, 0, 0]);
+  assert.equal(lg.table[3].name, 'Strzałka Chojny Łódź'); // ucięta nazwa
+  assert.equal(lg.table[0].played, 1); // z „Runda 1. z 14”
+  assert.ok(parseLeague(L('league-mobile-rp'), TEAMS).table.every((t) => t.points == null));
+});

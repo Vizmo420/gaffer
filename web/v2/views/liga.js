@@ -179,7 +179,7 @@ async function fromShots(files, st, app) {
       }
     }
     if (tableRows) await save('league');
-    st.textContent = tableRows || added ? `Tabela: ${tableRows} drużyn, terminarz: ${added} meczów.` : 'Nie znalazłem tabeli ani meczów. Zrób zrzut „Aktualna tabela” albo „Kalendarz spotkań” z HT.';
+    st.textContent = tableRows || added ? `Tabela: ${tableRows} drużyn, terminarz: ${added} meczów.` : 'Nie znalazłem punktów ani meczów. W aplikacji HT zrób zrzut tabeli na zakładce z kolumną „Pkt” albo zrzut „Kalendarz spotkań”.';
     if (tableRows || added) { toast('Liga zaktualizowana', 'good'); app.render(); }
   } catch (e) { st.textContent = e.message; }
 }
